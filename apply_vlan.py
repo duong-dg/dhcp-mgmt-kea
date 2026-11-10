@@ -76,7 +76,7 @@ def wait_for_ha():
             time.sleep(3)
 
 
-def run(apply):
+def run(apply, prepare=False):
     if not all(NODES) or NODES[0] == NODES[1]:
         raise ValueError("Cần hai URL Kea khác nhau.")
     PENDING_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -94,7 +94,7 @@ def run(apply):
                 raise ValueError(f"Node {node + 1}: thiếu lệnh kiểm tra, nạp hoặc lưu cấu hình.")
             kea(node, "config-test", {"Dhcp4": candidate})
         print(f"Hai node đã qua config-test. Subnet {expected['subnet']}, ID {expected['id']}.", flush=True)
-        if not apply:
+        if not apply and not prepare:
             return
         if configurations() != original or pending.read_bytes() != raw:
             raise ValueError("Cấu hình hoặc file chờ vừa thay đổi. Hãy kiểm tra lại.")
@@ -103,6 +103,12 @@ def run(apply):
         for node, config in enumerate(original, 1):
             (backup / f"node-{node}.json").write_text(json.dumps({"Dhcp4": config}, indent=2), encoding="utf-8")
         print(f"Bản sao cấu hình: {backup}", flush=True)
+        if prepare:
+            for node, config in enumerate(candidates, 1):
+                path = backup / f"node-{node}.next.json"
+                path.write_text(json.dumps({"Dhcp4": config}, indent=2) + "\n", encoding="utf-8")
+                print(f"Node {node}: {path}", flush=True)
+            return
         attempted = []
         try:
             for node, candidate in enumerate(candidates):
@@ -125,10 +131,12 @@ def run(apply):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--apply", action="store_true", help="Ghi vào hai node sau khi kiểm tra")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--apply", action="store_true", help="Ghi vào hai node sau khi kiểm tra")
+    mode.add_argument("--prepare", action="store_true", help="Xuất cấu hình đã kiểm tra, không nạp Kea")
     args = parser.parse_args()
     os.umask(0o077)
     try:
-        run(args.apply)
+        run(args.apply, args.prepare)
     except (ValueError, OSError, KeyError, TypeError) as error:
         raise SystemExit(f"Dừng: {error}") from error
