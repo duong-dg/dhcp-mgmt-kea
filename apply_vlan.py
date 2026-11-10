@@ -57,11 +57,12 @@ def build_candidates(original, plan):
 def verify_subnet(expected):
     for node, config in enumerate(configurations(), 1):
         match = next((subnet for subnet in subnets(config) if subnet["id"] == expected["id"]), {})
-        if expected.get("kind") == "reservation":
-            if match.get("subnet") != expected["subnet"] or not any(
+        if expected.get("kind") in ("reservation", "remove-reservation"):
+            present = any(
                 all(item.get(key) == value for key, value in expected["reservation"].items())
                 for item in match.get("reservations", [])
-            ):
+            )
+            if match.get("subnet") != expected["subnet"] or present != (expected["kind"] == "reservation"):
                 raise ValueError(f"Node {node}: reservation sau khi nạp không khớp.")
             continue
         if any(match.get(key) != expected[key] for key in ("subnet", "interface", "user-context")):
@@ -92,9 +93,18 @@ def reservation_candidates(original, plan):
                        if item["id"] == plan["id"] and item["subnet"] == plan["subnet"]), None)
         if subnet is None:
             raise ValueError(f"Node {node + 1}: cần subnet độc lập khớp với lease.")
-        if (config.get("hosts-database") or config.get("hosts-databases")
-                or (config.get("config-control") or {}).get("config-databases")
-                or not subnet.get("reservations-in-subnet", config.get("reservations-in-subnet", True))
+        if config.get("hosts-database") or config.get("hosts-databases") or (
+                config.get("config-control") or {}).get("config-databases"):
+            raise ValueError(f"Node {node + 1}: chỉ hỗ trợ reservation lưu bằng file.")
+        reservations = subnet.setdefault("reservations", [])
+        if plan["kind"] == "remove-reservation":
+            matches = [item for item in reservations if item.get("ip-address") == address
+                       and item.get("hw-address", "").lower() == mac]
+            if len(matches) != 1:
+                raise ValueError(f"Node {node + 1}: không tìm thấy đúng một reservation IP/MAC để bỏ.")
+            reservations.remove(matches[0])
+            continue
+        if (not subnet.get("reservations-in-subnet", config.get("reservations-in-subnet", True))
                 or subnet.get("reservations-out-of-pool", config.get("reservations-out-of-pool", False))
                 or "hw-address" not in config.get("host-reservation-identifiers", ["hw-address"])):
             raise ValueError(f"Node {node + 1}: chế độ reservation hiện tại không hỗ trợ thao tác này.")
@@ -103,7 +113,6 @@ def reservation_candidates(original, plan):
                 or leases.get("state", 0) != 0
                 or leases.get("cltt", 0) + leases.get("valid-lft", 0) <= time.time()):
             raise ValueError(f"Node {node + 1}: lease không còn hoạt động hoặc MAC đã thay đổi.")
-        reservations = subnet.setdefault("reservations", [])
         if any(item.get("ip-address") == address or item.get("hw-address", "").lower() == mac
                for item in [*config.get("reservations", []), *reservations]):
             raise ValueError(f"Node {node + 1}: IP hoặc MAC đã có reservation.")
@@ -122,7 +131,7 @@ def run(apply, prepare=False):
         plan = plan_preview(json.loads(raw))
         health()
         original = configurations()
-        if plan.get("kind") == "reservation":
+        if plan.get("kind") in ("reservation", "remove-reservation"):
             candidates, expected = reservation_candidates(original, plan)
         else:
             candidates, expected = build_candidates(original, plan)

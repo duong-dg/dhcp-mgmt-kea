@@ -6,7 +6,7 @@
 <style>
 *{box-sizing:border-box}body{margin:0;background:#f1f5f9;color:#14243c;font:15px system-ui,sans-serif}header{background:#12243b;color:white;padding:24px max(5vw,20px)}header small{color:#9de1d2;letter-spacing:.13em}h1{margin:5px 0}main{max-width:1200px;margin:auto;padding:25px 20px}section,details.form{background:white;border:1px solid #dce4ee;border-radius:14px;padding:20px;margin:15px 0}.bar{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}h2,p{margin:0 0 8px}.stats{display:flex;gap:30px;flex-wrap:wrap}.stats strong{font-size:28px;display:block}button{background:#096957;color:white;border:0;border-radius:8px;padding:10px 16px;font:inherit;cursor:pointer}button:disabled{opacity:.55;cursor:default}input,textarea{display:block;width:100%;padding:10px;border:1px solid #b8c6d6;border-radius:7px;margin-top:5px;font:inherit}form{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:14px}summary{cursor:pointer;font-weight:600}.scroll{overflow:auto}table{border-collapse:collapse;width:100%;text-align:left}th,td{padding:12px;border-bottom:1px solid #e2e8f0;vertical-align:top}th{white-space:nowrap;background:#f8fafc}td li{white-space:nowrap}#notice{white-space:pre-wrap;color:#8a3912}#result{margin-top:12px}.muted{color:#506078}
 .lease-table{margin-top:8px;font-size:13px;min-width:485px}.lease-table th,.lease-table td{padding:8px;white-space:nowrap}.lease-table td:first-child{font-family:monospace;color:#096957}.logout{display:block;margin:0}.logout button{background:#ffffff20}#empty{margin-top:12px}.capacity{display:flex;gap:16px;flex-wrap:wrap;margin:12px 0}.capacity span{background:#edf7f5;padding:8px 12px;border-radius:8px}.lease-details{margin:0}.excluded{margin:8px 0}.lease-details summary{color:#096957}.capacity progress{width:100%;accent-color:#096957}[hidden]{display:none!important}header{background:linear-gradient(115deg,#102137,#173d4c)}header h1{font-size:clamp(24px,4vw,36px)}main{max-width:1160px}.stats{flex:1;display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}.stats>div{background:#f1f7fa;border-radius:12px;padding:13px 16px}.stats strong{font-variant-numeric:tabular-nums}.vlan-link,.back{color:#096957;font-weight:700;text-decoration:none}.vlan-link:hover,.back:hover{text-decoration:underline}.vlan-link{display:inline-block;padding:4px 0}.vlan-list tbody tr:hover{background:#f4faf9}.usage{min-width:140px}.usage progress{display:block;width:100%;height:9px;margin-top:6px;accent-color:#096957}.usage small{color:#506078}.detail-title{margin-top:12px;font-size:30px}.range-list{margin:6px 0 0;padding-left:20px}.lease-table{font-size:14px}.lease-table th,.lease-table td{padding:12px}.lease-table tbody tr:nth-child(even){background:#f8fafc}.notice{padding:12px;background:#fff5e8;border-radius:8px}.notice:empty{display:none}
-</style>
+.reservation-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center}.reservation-actions button{font-size:12px;padding:6px 9px}.reservation-badge{display:inline-block;background:#dbf4eb;color:#075848;border-radius:14px;padding:4px 8px;font-size:12px;font-weight:700}.reservation-badge.waiting{background:#fff0d7;color:#764200}</style>
 <header class="bar"><div><small>QUẢN TRỊ MẠNG / DHCPV4</small><h1>Kea DHCP Manager</h1><div>Theo dõi subnet và địa chỉ đã cấp trên cặp máy chủ HA</div></div><form class="logout" method="post" action="/logout"><button>Đăng xuất</button></form></header>
 <main>
 <section class="bar">
@@ -36,15 +36,17 @@
 <section id="vlan-detail" hidden></section>
 <section>
 <div class="bar"><div><h2 id="list-title">Tổng quan VLAN</h2><p id="list-description" class="muted">Chọn một VLAN để xem dải cấp phát và danh sách IP.</p></div><label id="search-label">Tìm theo VLAN, subnet hoặc thiết bị<input id="filter" type="search" placeholder="Nhập từ khóa"></label></div>
+<p id="reservation-status" class="muted" role="status"></p>
 <div class="scroll"><table id="data-table" class="vlan-list"><thead><tr id="headings"></tr></thead><tbody id="rows"></tbody></table></div>
 <p id="empty" class="muted" role="status"></p>
-<p id="reservation-status" class="muted" role="status"></p>
+
 </section>
 </main>
 <script>
 const el = id => document.getElementById(id);
 let rows = [];
 let partial = false;
+let pendingReservation = null;
 const selection = new URLSearchParams(location.search);
 const isDetail = location.pathname === '/vlan';
 el('back').hidden = !isDetail;
@@ -136,32 +138,72 @@ function render() {
   el('list-description').textContent = isDetail ?
     'Tìm thiết bị theo IP, hostname hoặc địa chỉ MAC.' : 'Chọn một VLAN để xem dải cấp phát và danh sách IP.';
   if (isDetail) {
-    const leases = selected ? selected.leases.filter(lease => matches(query, leaseFields(lease))) : [];
-    for (const lease of leases) {
+    const devices = new Map();
+    if (selected) {
+      for (const lease of selected.leases) {
+        const [ip, hostname, mac] = leaseFields(lease);
+        const expiry = new Date((lease.cltt + lease['valid-lft']) * 1000);
+        devices.set(ip + '|' + String(mac ?? '').toLowerCase(), {ip, mac, hostname, expiry, active: true});
+      }
+      for (const reservation of selected.reservations) {
+        const key = reservation.ip + '|' + reservation.mac;
+        const device = devices.get(key) || {ip: reservation.ip, mac: reservation.mac};
+        device.reservation = reservation;
+        devices.set(key, device);
+      }
+      const pending = pendingReservation;
+      if (pending?.id === selected.id && pending.subnet === selected.cidr) {
+        const ip = pending.reservation['ip-address'];
+        const mac = pending.reservation['hw-address'];
+        const key = ip + '|' + mac;
+        const device = devices.get(key) || {ip, mac};
+        const nodeCount = device.reservation?.nodes.length || 0;
+        if (pending.kind === 'reservation' ? nodeCount < 2 : nodeCount > 0 || partial) {
+          device.pending = pending.kind;
+          devices.set(key, device);
+        }
+      }
+    }
+    let count = 0;
+    for (const device of devices.values()) {
+      const {ip, mac, hostname, expiry, active, reservation, pending} = device;
+      if (!matches(query, [ip, mac, hostname])) continue;
+      count++;
       const tr = el('rows').insertRow();
-      const expiry = new Date((lease.cltt + lease['valid-lft']) * 1000);
-      for (const value of [...leaseFields(lease), expiry.toLocaleString('vi-VN')]) {
+      for (const value of [ip, hostname, mac, expiry?.toLocaleString('vi-VN')]) {
         tr.insertCell().textContent = value || '—';
       }
-      const cell = tr.insertCell();
-      if (!partial && /^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(lease['hw-address'])) {
-        const button = textElement('button', 'Giữ IP theo MAC');
+      const actions = document.createElement('div');
+      actions.className = 'reservation-actions';
+      tr.insertCell().append(actions);
+      const nodes = reservation?.nodes.length || 0;
+      const label = pending === 'reservation' ? 'Chờ giữ IP' : pending === 'remove-reservation' ? 'Chờ bỏ giữ' :
+        nodes === 2 ? 'Đang giữ · 2/2 node' : nodes === 1 ? 'Có giữ · 1/2 node' : '';
+      if (label) actions.append(textElement('span', label, 'reservation-badge' + (pending || nodes < 2 ? ' waiting' : '')));
+      if (pending || (!partial && nodes === 2) ||
+          (!partial && !nodes && active && /^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(mac))) {
+        const title = pending ? 'Hủy yêu cầu chờ' : nodes ? 'Bỏ giữ' : 'Giữ IP theo MAC';
+        const button = textElement('button', title);
         button.type = 'button';
         button.onclick = async () => {
-          if (!confirm('Giữ IP ' + lease['ip-address'] + ' cho MAC ' + lease['hw-address'] + '? Kế hoạch này thay bản chờ trước đó.')) return;
+          const prompt = title + ' cho ' + ip + ' · ' + mac + '?' +
+            (pending ? '' : ' Thao tác này thay bản chờ trước đó.');
+          if (!confirm(prompt)) return;
           button.disabled = true;
           try {
-            await stage({kind: 'reservation', id: selected.id, subnet: selected.cidr,
-              ip: lease['ip-address'], mac: lease['hw-address']}, 'reservation-status');
+            const ok = await stage({kind: pending || (nodes ? 'remove-reservation' : 'reservation'),
+              id: selected.id, subnet: selected.cidr, ip, mac}, 'reservation-status',
+              pending ? '/api/cancel-reservation' : '/api/stage-plan');
+            if (ok) await load();
           } finally {
             button.disabled = false;
           }
         };
-        cell.append(button);
+        actions.append(button);
       }
     }
-    el('empty').textContent = leases.length ? '' : selected ?
-      'Không có lease phù hợp để hiển thị.' : 'Không tìm thấy subnet này trong dữ liệu hiện có.';
+    el('empty').textContent = count ? '' : selected ?
+      'Không có lease hoặc IP giữ chỗ phù hợp.' : 'Không tìm thấy subnet này trong dữ liệu hiện có.';
     return;
   }
   const visible = rows.filter(row => matches(query, [vlanName(row), row.cidr]) ||
@@ -186,6 +228,7 @@ async function load() {
     if (!response.ok) throw new Error('Không thể tải dashboard.');
     const data = await response.json();
     rows = data.rows;
+    pendingReservation = data.pending_reservation;
     partial = Boolean(data.errors.length);
     el('count').textContent = rows.length;
     el('total').textContent = data.errors.length ? data.total + '*' : data.total;
@@ -216,15 +259,16 @@ el('form').oninput = () => {
   el('plan').textContent = '';
   el('result').textContent = '';
 };
-async function stage(plan, statusId) {
+async function stage(plan, statusId, endpoint = '/api/stage-plan') {
   try {
-    const response = await fetch('/api/stage-plan', {
+    const response = await fetch(endpoint, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(plan)
     });
     if (response.status === 401) { location.assign('/login'); return; }
     const result = await response.json();
     el(statusId).textContent = result.message || result.error;
+    return response.ok;
   } catch (error) {
     el(statusId).textContent = error.message;
   }

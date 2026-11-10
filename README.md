@@ -85,3 +85,8 @@ hai node. Tránh chạy cùng lúc với công cụ khác đang quản lý cấu
 Nếu thao tác lỗi sau khi bắt đầu ghi, script thử nạp và lưu lại cấu hình
 cũ. Nếu hoàn tác lỗi, dùng bản sao được báo trên terminal để đối soát.
 Giữ các bản sao trên máy chủ vì chúng chứa cấu hình Kea đầy đủ.
+
+Trong bảng VLAN, Chờ giữ IP hoặc Chờ bỏ giữ nghĩa là yêu cầu đã lưu trên
+web. Hủy yêu cầu chờ xóa kế hoạch chưa nạp. Đang giữ · 2/2 node nghĩa là
+cả hai node báo cùng reservation. Bỏ giữ tạo kế hoạch xóa đúng cặp IP/MAC
+và vẫn cần nạp qua SSH. Reservation còn hiện trong bảng khi lease hết hạn.

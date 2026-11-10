@@ -32,6 +32,7 @@ LOGIN_WINDOW = 60
 LOGIN_LIMIT = 5
 LOGIN_CHALLENGE = {}
 PENDING_DIR = Path(os.getenv("KEA_PENDING_DIR", str(Path.home() / ".kea-dashboard")))
+PENDING_FILE = PENDING_DIR / "pending-vlan.json"
 
 
 def stage_plan(data):
@@ -41,7 +42,7 @@ def stage_plan(data):
         try:
             json.dump(data, file)
             file.close()
-            draft.replace(PENDING_DIR / "pending-vlan.json")
+            draft.replace(PENDING_FILE)
         finally:
             draft.unlink(missing_ok=True)
 
@@ -155,9 +156,20 @@ def dashboard():
                 "id": key[0], "cidr": key[1],
                 "vlan": (subnet.get("user-context") or {}).get("vlan-id", EXISTING_VLANS.get(key)),
                 "pools": [pool["pool"] for pool in subnet.get("pools", [])],
-                "nodes": [],
+                "nodes": [], "reservations": [],
             })
             row["nodes"].append(node)
+            for reservation in subnet.get("reservations", []):
+                address = reservation.get("ip-address")
+                mac = reservation.get("hw-address", "").lower()
+                if not address or not mac:
+                    continue
+                entry = next((item for item in row["reservations"]
+                              if item["ip"] == address and item["mac"] == mac), None)
+                if entry is None:
+                    entry = {"ip": address, "mac": mac, "nodes": []}
+                    row["reservations"].append(entry)
+                entry["nodes"].append(node)
         for lease in entries:
             if lease.get("state", 0) == 0 and lease["cltt"] + lease["valid-lft"] > now:
                 key = (lease["subnet-id"], lease["ip-address"])
@@ -170,7 +182,15 @@ def dashboard():
         ]
         row["leases"].sort(key=lambda lease: ip.IPv4Address(lease["ip-address"]))
         row["capacity"] = pool_summary(row)
+    pending = None
+    try:
+        draft = json.loads(PENDING_FILE.read_text(encoding="utf-8"))
+        if draft.get("kind") in ("reservation", "remove-reservation"):
+            pending = plan_preview(draft)
+    except (FileNotFoundError, ValueError, KeyError, TypeError):
+        pass
     return {"rows": list(rows.values()), "errors": [e for _, _, errors in nodes for e in errors],
+            "pending_reservation": pending,
             "writes": WRITES, "total": len(leases)}
 
 
@@ -207,7 +227,7 @@ def vlan_plan(data, allow_gateway_in_range=False):
 
 
 def plan_preview(data):
-    if data.get("kind") == "reservation":
+    if data.get("kind") in ("reservation", "remove-reservation"):
         address = ip.IPv4Address(data["ip"])
         network = ip.IPv4Network(data["subnet"])
         mac = data["mac"].lower()
@@ -216,7 +236,7 @@ def plan_preview(data):
             raise ValueError("MAC không hợp lệ.")
         if not 0 < subnet_id < 4294967295 or address not in network:
             raise ValueError("IP hoặc subnet ID không hợp lệ.")
-        return {"kind": "reservation", "id": subnet_id, "subnet": str(network),
+        return {"kind": data["kind"], "id": subnet_id, "subnet": str(network),
                 "reservation": {"hw-address": mac, "ip-address": str(address)}}
     return trunk_preview(data)
 
@@ -463,7 +483,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/subnets":
             return self.reply(403, {"error": "Áp dụng DHCP chưa được bật. Cần xác thực OTP và trình triển khai HA."})
-        if self.path not in ("/api/vlan-plan", "/api/stage-plan"):
+        if self.path not in ("/api/vlan-plan", "/api/stage-plan", "/api/cancel-reservation"):
             return self.reply(404, {"error": "Không tìm thấy."})
         origin = self.web_origin()
         if self.headers.get("Origin") != origin or self.headers.get_content_type() != "application/json":
@@ -475,6 +495,15 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(self.rfile.read(size))
             if self.path == "/api/vlan-plan":
                 self.reply(200, plan_preview(data))
+            elif self.path == "/api/cancel-reservation":
+                try:
+                    current = plan_preview(json.loads(PENDING_FILE.read_text(encoding="utf-8")))
+                except FileNotFoundError:
+                    return self.reply(409, {"error": "Không còn kế hoạch chờ."})
+                if current.get("kind") not in ("reservation", "remove-reservation") or current != plan_preview(data):
+                    return self.reply(409, {"error": "Kế hoạch chờ đã thay đổi. Hãy làm mới."})
+                PENDING_FILE.unlink()
+                self.reply(200, {"message": "Đã hủy kế hoạch chờ."})
             else:
                 plan_preview(data)
                 stage_plan(data)
