@@ -48,6 +48,7 @@ let rows = [];
 let partial = false;
 let pendingReservation = null;
 let autoReservations = false;
+let reservationBusy = false;
 const selection = new URLSearchParams(location.search);
 const isDetail = location.pathname === '/vlan';
 el('back').hidden = !isDetail;
@@ -181,24 +182,41 @@ function render() {
       const label = pending === 'reservation' ? 'Chờ giữ IP' : pending === 'remove-reservation' ? 'Chờ bỏ giữ' :
         nodes === 2 ? 'Đang giữ · 2/2 node' : nodes === 1 ? 'Có giữ · 1/2 node' : '';
       if (label) actions.append(textElement('span', label, 'reservation-badge' + (pending || nodes < 2 ? ' waiting' : '')));
-      if (pending || (!partial && nodes === 2) ||
-          (!partial && !nodes && active && /^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(mac))) {
+      if (pending || nodes === 2 ||
+          (!nodes && active && /^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(mac))) {
         const title = pending ? 'Hủy yêu cầu chờ' : nodes ? 'Bỏ giữ' : 'Giữ IP theo MAC';
         const button = textElement('button', title);
         button.type = 'button';
+        button.disabled = reservationBusy || (partial && !pending);
+        if (partial && !pending) button.title = 'Cần dữ liệu đầy đủ từ hai node.';
         button.onclick = async () => {
           const prompt = title + ' cho ' + ip + ' · ' + mac + '?' +
             (pending || autoReservations ? '' : ' Thao tác này thay bản chờ trước đó.');
           if (!confirm(prompt)) return;
-          button.disabled = true;
-          if (autoReservations && !pending) el('reservation-status').textContent = 'Đang kiểm tra và áp dụng trên hai node Kea…';
+          const kind = pending || (nodes ? 'remove-reservation' : 'reservation');
+          const plan = {kind, id: selected.id, subnet: selected.cidr, ip, mac};
+          reservationBusy = true;
+          el('refresh').disabled = true;
+          render();
+          el('reservation-status').textContent = 'Đang xử lý ' + ip + '…';
           try {
-            const ok = await stage({kind: pending || (nodes ? 'remove-reservation' : 'reservation'),
-              id: selected.id, subnet: selected.cidr, ip, mac}, 'reservation-status',
+            const ok = await stage(plan, 'reservation-status',
               pending ? '/api/cancel-reservation' : autoReservations ? '/api/apply-reservation' : '/api/stage-plan');
-            if (ok) await load();
+            if (!ok) return;
+            if (pending) {
+              pendingReservation = null;
+            } else if (autoReservations) {
+              const normalizedMac = mac.toLowerCase();
+              selected.reservations = selected.reservations.filter(item => item.ip !== ip || item.mac !== normalizedMac);
+              if (kind === 'reservation') selected.reservations.push({ip, mac: normalizedMac, nodes: [1, 2]});
+            } else {
+              pendingReservation = {kind, id: selected.id, subnet: selected.cidr,
+                reservation: {'ip-address': ip, 'hw-address': mac.toLowerCase()}};
+            }
           } finally {
-            button.disabled = false;
+            reservationBusy = false;
+            el('refresh').disabled = false;
+            render();
           }
         };
         actions.append(button);
@@ -225,7 +243,7 @@ function render() {
 async function load() {
   el('refresh').disabled = true;
   try {
-    const response = await fetch('/api/dashboard');
+    const response = await fetch('/api/dashboard', {cache: 'no-store'});
     if (response.status === 401) { location.assign('/login'); return; }
     if (!response.ok) throw new Error('Không thể tải dashboard.');
     const data = await response.json();
