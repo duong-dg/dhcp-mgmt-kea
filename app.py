@@ -7,6 +7,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from http.cookies import CookieError, SimpleCookie
+from urllib.parse import parse_qs
 from urllib.request import Request, urlopen
 
 NODES = [os.getenv("KEA_A_URL"), os.getenv("KEA_B_URL")]
@@ -194,12 +196,14 @@ def create(data):
 
 
 class Handler(BaseHTTPRequestHandler):
-    def reply(self, status, content, kind="application/json"):
+    def reply(self, status, content, kind="application/json", headers=()):
         payload = content if isinstance(content, bytes) else json.dumps(content, ensure_ascii=False).encode()
         self.send_response(status)
         self.send_header("Content-Type", kind + "; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
+        for name, value in headers:
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(payload)
 
@@ -209,18 +213,62 @@ class Handler(BaseHTTPRequestHandler):
             return False
         if not WEB_PASSWORD:
             return True
-        token = base64.b64encode(f"{WEB_USER}:{WEB_PASSWORD}".encode()).decode()
-        actual = self.headers.get("Authorization", "").encode()
-        if hmac.compare_digest(actual, f"Basic {token}".encode()):
-            return True
-        self.send_response(401)
-        self.send_header("WWW-Authenticate", 'Basic realm="Kea DHCP Manager", charset="UTF-8"')
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Length", "0")
-        self.end_headers()
+        try:
+            cookie = SimpleCookie(self.headers.get("Cookie", ""))
+            token = cookie["kea_session"].value
+            expiry = int(token.split(".", 1)[0])
+            if expiry > time.time() and hmac.compare_digest(token.encode(), self.session_token(expiry).encode()):
+                return True
+        except (CookieError, KeyError, ValueError):
+            pass
+        if self.path.startswith("/api/"):
+            self.reply(401, {"error": "Phiên đăng nhập đã hết hạn."})
+        else:
+            self.reply(303, b"", headers=[("Location", "/login")])
         return False
 
+    def session_token(self, expiry):
+        digest = hmac.digest(WEB_PASSWORD.encode(), f"{WEB_USER}:{expiry}".encode(), "sha256")
+        return f"{expiry}.{base64.urlsafe_b64encode(digest).decode()}"
+
+    def login_page(self, failed=False):
+        page = Path(__file__).with_name("login.html").read_text(encoding="utf-8")
+        error = "Tên đăng nhập hoặc mật khẩu không đúng." if failed else ""
+        self.reply(401 if failed else 200, page.replace("{{error}}", error).encode(), "text/html")
+
+    def login_post(self):
+        host = self.headers.get("Host")
+        if host != f"{WEB_BIND}:{self.server.server_port}" or self.headers.get("Origin") != (WEB_ORIGIN or f"http://{host}"):
+            return self.reply(403, {"error": "Yêu cầu không hợp lệ."})
+        if not WEB_PASSWORD:
+            return self.reply(303, b"", headers=[("Location", "/")])
+        secure = "; Secure" if WEB_ORIGIN else ""
+        if self.path == "/logout":
+            return self.reply(303, b"", headers=[
+                ("Location", "/login"),
+                ("Set-Cookie", f"kea_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict{secure}"),
+            ])
+        try:
+            size = int(self.headers.get("Content-Length", 0))
+            if not 0 < size <= 8192 or self.headers.get_content_type() != "application/x-www-form-urlencoded":
+                raise ValueError
+            fields = parse_qs(self.rfile.read(size).decode())
+        except ValueError:
+            return self.reply(400, {"error": "Yêu cầu không hợp lệ."})
+        user_ok = hmac.compare_digest(fields.get("username", [""])[0].encode(), WEB_USER.encode())
+        password_ok = hmac.compare_digest(fields.get("password", [""])[0].encode(), WEB_PASSWORD.encode())
+        if not (user_ok and password_ok):
+            return self.login_page(failed=True)
+        age = 8 * 3600
+        token = self.session_token(int(time.time()) + age)
+        self.reply(303, b"", headers=[
+            ("Location", "/"),
+            ("Set-Cookie", f"kea_session={token}; Path=/; Max-Age={age}; HttpOnly; SameSite=Strict{secure}"),
+        ])
+
     def do_GET(self):
+        if self.path == "/login" and self.headers.get("Host") == f"{WEB_BIND}:{self.server.server_port}":
+            return self.login_page()
         if not self.authorized():
             return
         if self.path == "/":
@@ -231,6 +279,8 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(404, {"error": "Không tìm thấy."})
 
     def do_POST(self):
+        if self.path in ("/login", "/logout"):
+            return self.login_post()
         if not self.authorized():
             return
         if self.path not in ("/api/subnets", "/api/vlan-plan"):

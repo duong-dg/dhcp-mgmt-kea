@@ -5,8 +5,8 @@
 <title>Kea DHCP Manager</title>
 <style>
 *{box-sizing:border-box}body{margin:0;background:#f1f5f9;color:#14243c;font:15px system-ui,sans-serif}header{background:#12243b;color:white;padding:24px max(5vw,20px)}header small{color:#9de1d2;letter-spacing:.13em}h1{margin:5px 0}main{max-width:1200px;margin:auto;padding:25px 20px}section,details.form{background:white;border:1px solid #dce4ee;border-radius:14px;padding:20px;margin:15px 0}.bar{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}h2,p{margin:0 0 8px}.stats{display:flex;gap:30px;flex-wrap:wrap}.stats strong{font-size:28px;display:block}button{background:#096957;color:white;border:0;border-radius:8px;padding:10px 16px;font:inherit;cursor:pointer}button:disabled{opacity:.55;cursor:default}input{display:block;width:100%;padding:10px;border:1px solid #b8c6d6;border-radius:7px;margin-top:5px;font:inherit}form{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:14px}summary{cursor:pointer;font-weight:600}.scroll{overflow:auto}table{border-collapse:collapse;width:100%;text-align:left}th,td{padding:12px;border-bottom:1px solid #e2e8f0;vertical-align:top}th{white-space:nowrap;background:#f8fafc}td li{white-space:nowrap}#notice{white-space:pre-wrap;color:#8a3912}#result{margin-top:12px}.muted{color:#506078}
-</style>
-<header><small>QUẢN TRỊ MẠNG / DHCPV4</small><h1>Kea DHCP Manager</h1><div>Theo dõi subnet và địa chỉ đã cấp trên cặp máy chủ HA</div></header>
+.lease-table{margin-top:8px;font-size:13px;min-width:485px}.lease-table th,.lease-table td{padding:8px;white-space:nowrap}.lease-table td:first-child{font-family:monospace;color:#096957}.logout{display:block;margin:0}.logout button{background:#ffffff20}#empty{margin-top:12px}</style>
+<header class="bar"><div><small>QUẢN TRỊ MẠNG / DHCPV4</small><h1>Kea DHCP Manager</h1><div>Theo dõi subnet và địa chỉ đã cấp trên cặp máy chủ HA</div></div><form class="logout" method="post" action="/logout"><button>Đăng xuất</button></form></header>
 <main>
 <section class="bar">
 <div class="stats"><div><strong id="count">—</strong>Subnet</div><div><strong id="total">—</strong>Lease đang hoạt động</div><div><strong id="health">—</strong>Nguồn dữ liệu</div></div>
@@ -30,7 +30,7 @@
 <pre id="plan" class="scroll"></pre>
 </details>
 <section>
-<div class="bar"><div><h2>Subnet và lease</h2><p class="muted">VLAN ID lấy từ Kea hoặc từ ánh xạ của dashboard.</p></div><label>Tìm VLAN hoặc subnet<input id="filter" type="search" placeholder="Ví dụ 20 hoặc 192.168"></label></div>
+<div class="bar"><div><h2>Subnet và lease</h2><p class="muted">VLAN ID lấy từ Kea hoặc từ ánh xạ của dashboard.</p></div><label>Tìm VLAN, IP, MAC hoặc hostname<input id="filter" type="search" placeholder="Ví dụ 20 hoặc 192.168"></label></div>
 <div class="scroll"><table><thead><tr><th>VLAN</th><th>Subnet</th><th>Pool IP</th><th>Node có subnet</th><th>IP đã cấp</th></tr></thead><tbody id="rows"></tbody></table></div>
 <p id="empty" class="muted"></p>
 </section>
@@ -40,7 +40,7 @@ const el = id => document.getElementById(id);
 let rows = [];
 function render() {
   const query = el('filter').value.trim();
-  const visible = rows.filter(row => [row.vlan, row.cidr].some(value => String(value ?? '').includes(query)));
+  const visible = rows.filter(row => [row.vlan, row.cidr, ...row.leases.flatMap(lease => [lease["ip-address"], lease.hostname, lease["hw-address"]])].some(value => String(value ?? "").toLowerCase().includes(query.toLowerCase())));
   el('rows').replaceChildren();
   el('empty').textContent = visible.length ? '' : 'Không có subnet để hiển thị.';
   for (const row of visible) {
@@ -56,14 +56,26 @@ function render() {
     const details = document.createElement('details');
     const summary = document.createElement('summary');
     summary.textContent = row.leases.length + ' IP · Xem danh sách';
-    const list = document.createElement('ul');
-    for (const lease of row.leases) {
-      const li = document.createElement('li');
-      const expiry = new Date((lease.cltt + lease['valid-lft']) * 1000);
-      li.textContent = [lease['ip-address'], lease['hw-address'], lease.hostname, expiry.toLocaleString('vi-VN')].filter(Boolean).join(' · ');
-      list.append(li);
+    const scroll = document.createElement('div');
+    scroll.className = 'scroll';
+    const table = document.createElement('table');
+    table.className = 'lease-table';
+    const heading = table.createTHead().insertRow();
+    for (const title of ['Địa chỉ IP', 'Hostname', 'MAC', 'Hết hạn']) {
+      const th = document.createElement('th');
+      th.textContent = title;
+      heading.append(th);
     }
-    details.append(summary, list);
+    const body = table.createTBody();
+    for (const lease of row.leases) {
+      const entry = body.insertRow();
+      const expiry = new Date((lease.cltt + lease['valid-lft']) * 1000);
+      for (const value of [lease['ip-address'], lease.hostname, lease['hw-address'], expiry.toLocaleString('vi-VN')]) {
+        entry.insertCell().textContent = value || '—';
+      }
+    }
+    scroll.append(table);
+    details.append(summary, scroll);
     cell.append(details);
   }
 }
@@ -71,6 +83,7 @@ async function load() {
   el('refresh').disabled = true;
   try {
     const response = await fetch('/api/dashboard');
+    if (response.status === 401) { location.assign('/login'); return; }
     if (!response.ok) throw new Error('Không thể tải dashboard.');
     const data = await response.json();
     rows = data.rows;
