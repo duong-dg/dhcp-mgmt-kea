@@ -14,8 +14,16 @@ try {
     $env:KEA_ENABLE_WRITES = '0'
     $env:KEA_A_AUTH = Read-KeaAuthorization 'A'
     $env:KEA_B_AUTH = Read-KeaAuthorization 'B'
+    if (-not $env:KEA_WEB_PASSWORD) {
+        $webCredential = Get-Credential -UserName 'admin' -Message 'Dat tai khoan va mat khau dang nhap dashboard'
+        if (-not $webCredential) { throw 'Can dat mat khau dashboard.' }
+        $env:KEA_WEB_USER = $webCredential.UserName
+        $env:KEA_WEB_PASSWORD = $webCredential.GetNetworkCredential().Password
+        $clearWebPassword = $true
+    }
     python (Join-Path $PSScriptRoot 'app.py')
     if ($LASTEXITCODE -ne 0) { throw "Python dung voi ma loi $LASTEXITCODE." }
 } finally {
+    if ($clearWebPassword) { Remove-Item Env:KEA_WEB_PASSWORD -ErrorAction SilentlyContinue }
     Remove-Item Env:KEA_A_AUTH,Env:KEA_B_AUTH -ErrorAction SilentlyContinue
 }

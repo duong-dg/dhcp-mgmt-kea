@@ -3,6 +3,7 @@ import base64
 import hmac
 import json
 import os
+import secrets
 import time
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -17,6 +18,10 @@ WEB_BIND = os.getenv("KEA_WEB_BIND", "127.0.0.1")
 WEB_USER = os.getenv("KEA_WEB_USER", "admin")
 WEB_PASSWORD = os.getenv("KEA_WEB_PASSWORD", "")
 WEB_ORIGIN = os.getenv("KEA_WEB_ORIGIN")
+SESSION_KEY = secrets.token_bytes(32)
+FAILED_LOGINS = {}
+LOGIN_WINDOW = 60
+LOGIN_LIMIT = 5
 TRUNK = os.getenv("KEA_TRUNK_INTERFACE", "eth0")
 EXISTING_VLANS = {
     (int(item["subnet_id"]), item["cidr"]): int(item["vlan"])
@@ -202,6 +207,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", kind + "; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
         for name, value in headers:
             self.send_header(name, value)
         self.end_headers()
@@ -211,8 +219,6 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get("Host") != f"{WEB_BIND}:{self.server.server_port}":
             self.reply(403, {"error": "Host không hợp lệ."})
             return False
-        if not WEB_PASSWORD:
-            return True
         try:
             cookie = SimpleCookie(self.headers.get("Cookie", ""))
             token = cookie["kea_session"].value
@@ -228,7 +234,7 @@ class Handler(BaseHTTPRequestHandler):
         return False
 
     def session_token(self, expiry):
-        digest = hmac.digest(WEB_PASSWORD.encode(), f"{WEB_USER}:{expiry}".encode(), "sha256")
+        digest = hmac.digest(SESSION_KEY, f"{WEB_USER}:{expiry}".encode(), "sha256")
         return f"{expiry}.{base64.urlsafe_b64encode(digest).decode()}"
 
     def login_page(self, failed=False):
@@ -240,14 +246,21 @@ class Handler(BaseHTTPRequestHandler):
         host = self.headers.get("Host")
         if host != f"{WEB_BIND}:{self.server.server_port}" or self.headers.get("Origin") != (WEB_ORIGIN or f"http://{host}"):
             return self.reply(403, {"error": "Yêu cầu không hợp lệ."})
-        if not WEB_PASSWORD:
-            return self.reply(303, b"", headers=[("Location", "/")])
         secure = "; Secure" if WEB_ORIGIN else ""
         if self.path == "/logout":
             return self.reply(303, b"", headers=[
                 ("Location", "/login"),
                 ("Set-Cookie", f"kea_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict{secure}"),
             ])
+        now = time.monotonic()
+        for address, (_, deadline) in list(FAILED_LOGINS.items()):
+            if deadline <= now:
+                del FAILED_LOGINS[address]
+        address = self.client_address[0]
+        failures, deadline = FAILED_LOGINS.get(address, (0, now + LOGIN_WINDOW))
+        if failures >= LOGIN_LIMIT:
+            return self.reply(429, {"error": "Đăng nhập sai quá nhiều lần. Vui lòng thử lại sau."},
+                              headers=[("Retry-After", str(max(1, int(deadline - now))))])
         try:
             size = int(self.headers.get("Content-Length", 0))
             if not 0 < size <= 8192 or self.headers.get_content_type() != "application/x-www-form-urlencoded":
@@ -258,7 +271,9 @@ class Handler(BaseHTTPRequestHandler):
         user_ok = hmac.compare_digest(fields.get("username", [""])[0].encode(), WEB_USER.encode())
         password_ok = hmac.compare_digest(fields.get("password", [""])[0].encode(), WEB_PASSWORD.encode())
         if not (user_ok and password_ok):
+            FAILED_LOGINS[address] = (failures + 1, deadline)
             return self.login_page(failed=True)
+        FAILED_LOGINS.pop(address, None)
         age = 8 * 3600
         token = self.session_token(int(time.time()) + age)
         self.reply(303, b"", headers=[
@@ -303,9 +318,9 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8080"))
-    if not ip.IPv4Address(WEB_BIND).is_loopback and not WEB_PASSWORD:
-        raise SystemExit("Truy cập qua mạng yêu cầu KEA_WEB_PASSWORD.")
-    if WEB_ORIGIN and (not WEB_ORIGIN.startswith("https://") or not WEB_PASSWORD):
-        raise SystemExit("Truy cập qua proxy yêu cầu HTTPS và KEA_WEB_PASSWORD.")
+    if not WEB_PASSWORD.strip():
+        raise SystemExit("Cần đặt KEA_WEB_PASSWORD để khởi động dashboard.")
+    if WEB_ORIGIN and not WEB_ORIGIN.startswith("https://"):
+        raise SystemExit("Truy cập qua proxy yêu cầu HTTPS.")
     print(f"Kea DHCP Manager: http://{WEB_BIND}:{port}", flush=True)
     HTTPServer((WEB_BIND, port), Handler).serve_forever()

@@ -24,3 +24,9 @@ Form VLAN tạo bản xem trước Netplan và Kea. Việc áp dụng cấu hìn
 máy chủ, PORT thành cổng mong muốn và KEA_WEB_PASSWORD thành mật khẩu web.
 Chế độ này dùng HTTP. Dùng HTTPS qua reverse proxy hoặc SSH tunnel nếu
 cần mã hóa thông tin đăng nhập.
+
+Mật khẩu web là bắt buộc. Dashboard giới hạn 5 lần đăng nhập sai mỗi
+phút theo địa chỉ kết nối. Với reverse proxy, giới hạn này được chia sẻ
+cho các kết nối đến từ cùng proxy. Phiên đăng nhập hết hạn sau 8 giờ
+hoặc khi dịch vụ khởi động lại. Nếu dùng HTTPS qua reverse proxy, đặt
+KEA_WEB_ORIGIN đúng với URL HTTPS để cookie chỉ được gửi qua HTTPS.
