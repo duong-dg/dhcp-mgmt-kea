@@ -48,7 +48,7 @@ let rows = [];
 let partial = false;
 let pendingReservation = null;
 let autoReservations = false;
-let reservationBusy = false;
+let reservationBusy = null;
 const selection = new URLSearchParams(location.search);
 const isDetail = location.pathname === '/vlan';
 el('back').hidden = !isDetail;
@@ -185,17 +185,23 @@ function render() {
       if (pending || nodes === 2 ||
           (!nodes && active && /^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(mac))) {
         const title = pending ? 'Hủy yêu cầu chờ' : nodes ? 'Bỏ giữ' : 'Giữ IP theo MAC';
-        const button = textElement('button', title);
+        const deviceKey = ip + '|' + String(mac).toLowerCase();
+        const processing = reservationBusy === deviceKey;
+        const button = textElement('button', processing ? 'Đang xử lý…' : title);
         button.type = 'button';
-        button.disabled = reservationBusy || (partial && !pending);
+        button.disabled = processing || (partial && !pending);
         if (partial && !pending) button.title = 'Cần dữ liệu đầy đủ từ hai node.';
         button.onclick = async () => {
+          if (reservationBusy !== null) {
+            el('reservation-status').textContent = 'Đang xử lý một IP. Vui lòng đợi thao tác này hoàn tất.';
+            return;
+          }
           const prompt = title + ' cho ' + ip + ' · ' + mac + '?' +
             (pending || autoReservations ? '' : ' Thao tác này thay bản chờ trước đó.');
           if (!confirm(prompt)) return;
           const kind = pending || (nodes ? 'remove-reservation' : 'reservation');
           const plan = {kind, id: selected.id, subnet: selected.cidr, ip, mac};
-          reservationBusy = true;
+          reservationBusy = deviceKey;
           el('refresh').disabled = true;
           render();
           el('reservation-status').textContent = 'Đang xử lý ' + ip + '…';
@@ -214,7 +220,7 @@ function render() {
                 reservation: {'ip-address': ip, 'hw-address': mac.toLowerCase()}};
             }
           } finally {
-            reservationBusy = false;
+            reservationBusy = null;
             el('refresh').disabled = false;
             render();
           }
