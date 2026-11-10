@@ -43,3 +43,22 @@ Bấm tên VLAN để xem sức chứa pool, lease hoạt động và các dải
 pool động. Số chưa có lease hoạt động được tính từ pool trừ lease đang
 hoạt động trong pool. IP giữ chỗ hoặc bị từ chối vẫn có thể không khả
 dụng. Các dải ngoài pool động vẫn có thể chứa IP tĩnh hoặc reservation.
+
+## Thử gửi OTP qua SMTP
+
+Đặt các biến dưới đây trong EnvironmentFile của systemd, giữ quyền 600.
+Web cần chạy HTTPS. Người nhận cố định từ cấu hình máy chủ.
+
+```ini
+KEA_SMTP_HOST=smtp.example.net
+KEA_SMTP_PORT=587
+KEA_SMTP_TLS=starttls
+KEA_SMTP_USER=sender@example.net
+KEA_SMTP_PASSWORD="MAT_KHAU_SMTP"
+KEA_SMTP_FROM=sender@example.net
+KEA_SMTP_RECIPIENT=admin@example.net
+```
+
+Nếu nhà cung cấp dùng TLS trực tiếp, đặt KEA_SMTP_TLS=ssl và cổng phù hợp.
+Khởi động lại dịch vụ, xem trước một VLAN, bấm Gửi OTP thử rồi nhập mã.
+OTP thử không ghi Netplan hoặc Kea. Cấu hình SMTP hiện nhập trên máy chủ.

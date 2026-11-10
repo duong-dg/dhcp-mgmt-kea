@@ -30,6 +30,12 @@
 </form>
 <p id="result" role="status"></p>
 <pre id="plan" class="scroll"></pre>
+<form id="otp-form" hidden>
+<button id="otp-send" type="button">Gửi OTP thử</button>
+<label>Mã OTP<input id="otp-code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" required></label>
+<button>Xác minh OTP</button>
+</form>
+<p id="otp-status" role="status"></p>
 </details>
 <section id="vlan-detail" hidden></section>
 <section>
@@ -182,6 +188,34 @@ async function load() {
 }
 el('refresh').onclick = load;
 el('filter').oninput = render;
+let previewedPlan;
+el('form').oninput = () => {
+  previewedPlan = null;
+  el('otp-form').hidden = true;
+  el('otp-status').textContent = '';
+  el('plan').textContent = '';
+  el('result').textContent = '';
+};
+async function otp(action) {
+  const plan = previewedPlan;
+  if (!plan) return;
+  try {
+    const response = await fetch('/api/otp/' + action, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({plan, code: el('otp-code').value})
+    });
+    if (response.status === 401) { location.assign('/login'); return; }
+    const result = await response.json();
+    if (previewedPlan === plan) el('otp-status').textContent = result.message || result.error;
+  } catch (error) {
+    el('otp-status').textContent = error.message;
+  }
+}
+el('otp-send').onclick = () => otp('send');
+el('otp-form').onsubmit = event => {
+  event.preventDefault();
+  otp('verify');
+};
 el('form').onsubmit = async event => {
   event.preventDefault();
   const data = Object.fromEntries(new FormData(event.target));
@@ -193,6 +227,9 @@ el('form').onsubmit = async event => {
     if (!response.ok) throw new Error(result.error);
     el('result').textContent = 'Cấu hình dự kiến cho hai node.';
     el('plan').textContent = JSON.stringify(result, null, 2);
+    previewedPlan = data;
+    el('otp-code').value = '';
+    el('otp-form').hidden = false;
   } catch (error) {
     el('result').textContent = error.message;
   } finally {

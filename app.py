@@ -5,6 +5,8 @@ import json
 import os
 import secrets
 import ssl
+import smtplib
+from email.message import EmailMessage
 import time
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -26,6 +28,33 @@ SESSION_KEY = secrets.token_bytes(32)
 FAILED_LOGINS = {}
 LOGIN_WINDOW = 60
 LOGIN_LIMIT = 5
+OTP_REQUESTS = {}
+
+
+def mail_otp(code):
+    host = os.environ["KEA_SMTP_HOST"]
+    recipient = os.environ["KEA_SMTP_RECIPIENT"]
+    sender = os.environ["KEA_SMTP_FROM"]
+    mode = os.getenv("KEA_SMTP_TLS", "starttls")
+    context = ssl.create_default_context()
+    port = int(os.getenv("KEA_SMTP_PORT", "465" if mode == "ssl" else "587"))
+    if mode == "ssl":
+        client = smtplib.SMTP_SSL(host, port, timeout=8, context=context)
+    elif mode == "starttls":
+        client = smtplib.SMTP(host, port, timeout=8)
+    else:
+        raise ValueError("Kiểu TLS SMTP không hợp lệ.")
+    with client:
+        if mode == "starttls":
+            client.starttls(context=context)
+        if os.getenv("KEA_SMTP_USER"):
+            client.login(os.environ["KEA_SMTP_USER"], os.environ["KEA_SMTP_PASSWORD"])
+        message = EmailMessage()
+        message["From"] = sender
+        message["To"] = recipient
+        message["Subject"] = "Kea DHCP Manager — Mã xác nhận"
+        message.set_content(f"Mã xác nhận cấu hình VLAN: {code}. Mã hết hạn sau 5 phút.")
+        client.send_message(message)
 TRUNK = os.getenv("KEA_TRUNK_INTERFACE", "eth0")
 EXISTING_VLANS = {
     (int(item["subnet_id"]), item["cidr"]): int(item["vlan"])
@@ -363,7 +392,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.login_post()
         if not self.authorized():
             return
-        if self.path not in ("/api/subnets", "/api/vlan-plan"):
+        if self.path == "/api/subnets":
+            return self.reply(403, {"error": "Áp dụng DHCP chưa được bật. Cần xác thực OTP và trình triển khai HA."})
+        if self.path not in ("/api/vlan-plan", "/api/otp/send", "/api/otp/verify"):
             return self.reply(404, {"error": "Không tìm thấy."})
         origin = self.web_origin()
         if self.headers.get("Origin") != origin or self.headers.get_content_type() != "application/json":
@@ -376,9 +407,35 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/vlan-plan":
                 self.reply(200, trunk_preview(data))
             else:
-                self.reply(201, create(data))
+                self.otp(data)
         except (ValueError, KeyError, TypeError) as error:
             self.reply(400, {"error": str(error)})
+
+    def otp(self, data):
+        if not SECURE_WEB:
+            return self.reply(403, {"error": "OTP yêu cầu HTTPS."})
+        plan = trunk_preview(data["plan"])
+        fingerprint = json.dumps(plan, sort_keys=True)
+        now = time.monotonic()
+        record = OTP_REQUESTS.get(WEB_USER)
+        if self.path == "/api/otp/send":
+            if record and now - record["sent"] < 60:
+                return self.reply(429, {"error": "Đợi 60 giây trước khi gửi lại mã."})
+            code = f"{secrets.randbelow(1000000):06d}"
+            OTP_REQUESTS[WEB_USER] = {"sent": now, "attempts": 0}
+            try:
+                mail_otp(code)
+            except (KeyError, ValueError, OSError, smtplib.SMTPException):
+                return self.reply(502, {"error": "Không gửi được OTP. Kiểm tra cấu hình SMTP và kết nối TLS."})
+            OTP_REQUESTS[WEB_USER].update(code=code, fingerprint=fingerprint)
+            return self.reply(200, {"message": "Đã gửi OTP đến hộp thư quản trị."})
+        if not record or not record.get("code") or now - record["sent"] >= 300 or record["attempts"] >= 5:
+            return self.reply(400, {"error": "Mã hết hạn hoặc không còn hiệu lực. Hãy gửi lại mã."})
+        record["attempts"] += 1
+        if fingerprint != record["fingerprint"] or not hmac.compare_digest(str(data.get("code", "")).encode(), record["code"].encode()):
+            return self.reply(400, {"error": "Mã không đúng hoặc cấu hình đã thay đổi."})
+        record.pop("code")
+        self.reply(200, {"message": "OTP hợp lệ. Bản thử chưa áp dụng cấu hình DHCP."})
 
 
 if __name__ == "__main__":
