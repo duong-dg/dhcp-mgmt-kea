@@ -6,6 +6,7 @@ import os
 import secrets
 import ssl
 import smtplib
+import tempfile
 from email.message import EmailMessage
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -29,6 +30,19 @@ FAILED_LOGINS = {}
 LOGIN_WINDOW = 60
 LOGIN_LIMIT = 5
 OTP_REQUESTS = {}
+PENDING_DIR = Path(os.getenv("KEA_PENDING_DIR", str(Path.home() / ".kea-dashboard")))
+
+
+def stage_plan(data):
+    PENDING_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=PENDING_DIR, delete=False) as file:
+        draft = Path(file.name)
+        try:
+            json.dump(data, file)
+            file.close()
+            draft.replace(PENDING_DIR / "pending-vlan.json")
+        finally:
+            draft.unlink(missing_ok=True)
 
 
 def mail_otp(code):
@@ -438,8 +452,12 @@ class Handler(BaseHTTPRequestHandler):
             record["password_attempts"] = record.get("password_attempts", 0) + 1
             if not hmac.compare_digest(str(data.get("password", "")).encode(), WEB_PASSWORD.encode()):
                 return self.reply(401, {"error": "Mật khẩu web không đúng."})
+            try:
+                stage_plan(data["plan"])
+            except OSError:
+                return self.reply(500, {"error": "Không lưu được file cấu hình chờ trên máy chủ."})
             record.pop("verified_until")
-            return self.reply(200, {"message": "Đã xác nhận OTP và mật khẩu. Chưa ghi cấu hình xuống Kea."})
+            return self.reply(200, {"message": "Đã lưu VLAN chờ áp dụng trên máy chủ. Chạy apply_vlan.py qua SSH để kiểm tra và nạp Kea."})
         if not record or not record.get("code") or now - record["sent"] >= 300 or record["attempts"] >= 5:
             return self.reply(400, {"error": "Mã hết hạn hoặc không còn hiệu lực. Hãy gửi lại mã."})
         record["attempts"] += 1

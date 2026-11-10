@@ -62,3 +62,26 @@ KEA_SMTP_RECIPIENT=admin@example.net
 Nếu nhà cung cấp dùng TLS trực tiếp, đặt KEA_SMTP_TLS=ssl và cổng phù hợp.
 Khởi động lại dịch vụ, xem trước một VLAN, bấm Gửi OTP thử rồi nhập mã.
 OTP thử không ghi Netplan hoặc Kea. Cấu hình SMTP hiện nhập trên máy chủ.
+
+## Lưu kế hoạch và áp dụng qua SSH
+
+Sau khi xác minh OTP và nhập lại mật khẩu, web lưu một kế hoạch chờ
+trong ~/.kea-dashboard/pending-vlan.json của tài khoản chạy dịch vụ.
+Kế hoạch mới thay thế kế hoạch chờ trước đó.
+
+Trình apply_vlan.py chạy trên Linux. Nó chỉ cấu hình Kea cho interface
+VLAN đã tồn tại và có IP đúng trên cả hai máy. KEA_A_URL phải trỏ tới
+standby, KEA_B_URL phải trỏ tới primary. Chạy bằng cùng tài khoản và
+EnvironmentFile như dịch vụ web. Ví dụ:
+
+```bash
+sudo systemd-run --wait --pipe --collect --uid=WEB_USER_LINUX \
+  -p EnvironmentFile=/etc/kea-dashboard.env \
+  /usr/bin/python3 /DUONG_DAN_REPO/apply_vlan.py
+```
+
+Lệnh mặc định chỉ kiểm tra. Thêm --apply để sao lưu, nạp và lưu Kea trên
+hai node. Tránh chạy cùng lúc với công cụ khác đang quản lý cấu hình.
+Nếu thao tác lỗi sau khi bắt đầu ghi, script thử nạp và lưu lại cấu hình
+cũ. Nếu hoàn tác lỗi, dùng bản sao được báo trên terminal để đối soát.
+Giữ các bản sao trên máy chủ vì chúng chứa cấu hình Kea đầy đủ.
