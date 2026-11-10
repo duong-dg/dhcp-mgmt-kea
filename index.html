@@ -35,6 +35,7 @@
 <label>Mã OTP<input id="otp-code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" required></label>
 <button>Xác minh OTP</button>
 </form>
+<form id="confirm-form" hidden><label>Mật khẩu admin web<input id="confirm-password" type="password" autocomplete="current-password" required></label><button>Xác nhận mật khẩu</button></form>
 <p id="otp-status" role="status"></p>
 </details>
 <section id="vlan-detail" hidden></section>
@@ -192,6 +193,8 @@ let previewedPlan;
 el('form').oninput = () => {
   previewedPlan = null;
   el('otp-form').hidden = true;
+  el('confirm-form').hidden = true;
+  el('confirm-form').reset();
   el('otp-status').textContent = '';
   el('plan').textContent = '';
   el('result').textContent = '';
@@ -202,15 +205,29 @@ async function otp(action) {
   try {
     const response = await fetch('/api/otp/' + action, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({plan, code: el('otp-code').value})
+      body: JSON.stringify(action === 'confirm' ? {plan, password: el('confirm-password').value} : {plan, code: el('otp-code').value})
     });
-    if (response.status === 401) { location.assign('/login'); return; }
     const result = await response.json();
-    if (previewedPlan === plan) el('otp-status').textContent = result.message || result.error;
+    if (response.status === 401 && result.error === 'Phiên đăng nhập đã hết hạn.') {
+      location.assign('/login');
+      return;
+    }
+    if (previewedPlan !== plan) return;
+    el('otp-status').textContent = result.message || result.error;
+    if (response.ok && action === 'verify') el('confirm-form').hidden = false;
+    if (response.ok && action !== 'verify') el('confirm-form').hidden = true;
   } catch (error) {
     el('otp-status').textContent = error.message;
   }
 }
+el('confirm-form').onsubmit = async event => {
+  event.preventDefault();
+  try {
+    await otp('confirm');
+  } finally {
+    event.target.reset();
+  }
+};
 el('otp-send').onclick = () => otp('send');
 el('otp-form').onsubmit = event => {
   event.preventDefault();

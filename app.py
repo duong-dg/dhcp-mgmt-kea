@@ -394,7 +394,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/subnets":
             return self.reply(403, {"error": "Áp dụng DHCP chưa được bật. Cần xác thực OTP và trình triển khai HA."})
-        if self.path not in ("/api/vlan-plan", "/api/otp/send", "/api/otp/verify"):
+        if self.path not in ("/api/vlan-plan", "/api/otp/send", "/api/otp/verify", "/api/otp/confirm"):
             return self.reply(404, {"error": "Không tìm thấy."})
         origin = self.web_origin()
         if self.headers.get("Origin") != origin or self.headers.get_content_type() != "application/json":
@@ -418,6 +418,7 @@ class Handler(BaseHTTPRequestHandler):
         fingerprint = json.dumps(plan, sort_keys=True)
         now = time.monotonic()
         record = OTP_REQUESTS.get(WEB_USER)
+        session = SimpleCookie(self.headers.get("Cookie", ""))["kea_session"].value
         if self.path == "/api/otp/send":
             if record and now - record["sent"] < 60:
                 return self.reply(429, {"error": "Đợi 60 giây trước khi gửi lại mã."})
@@ -427,15 +428,26 @@ class Handler(BaseHTTPRequestHandler):
                 mail_otp(code)
             except (KeyError, ValueError, OSError, smtplib.SMTPException):
                 return self.reply(502, {"error": "Không gửi được OTP. Kiểm tra cấu hình SMTP và kết nối TLS."})
-            OTP_REQUESTS[WEB_USER].update(code=code, fingerprint=fingerprint)
+            OTP_REQUESTS[WEB_USER].update(code=code, fingerprint=fingerprint, session=session)
             return self.reply(200, {"message": "Đã gửi OTP đến hộp thư quản trị."})
+        if not record or record.get("session") != session or record.get("fingerprint") != fingerprint:
+            return self.reply(400, {"error": "Phiên hoặc cấu hình đã thay đổi. Hãy gửi lại mã."})
+        if self.path == "/api/otp/confirm":
+            if now >= record.get("verified_until", 0) or record.get("password_attempts", 0) >= 5:
+                return self.reply(400, {"error": "Xác nhận đã hết hiệu lực. Hãy gửi lại mã."})
+            record["password_attempts"] = record.get("password_attempts", 0) + 1
+            if not hmac.compare_digest(str(data.get("password", "")).encode(), WEB_PASSWORD.encode()):
+                return self.reply(401, {"error": "Mật khẩu web không đúng."})
+            record.pop("verified_until")
+            return self.reply(200, {"message": "Đã xác nhận OTP và mật khẩu. Chưa ghi cấu hình xuống Kea."})
         if not record or not record.get("code") or now - record["sent"] >= 300 or record["attempts"] >= 5:
             return self.reply(400, {"error": "Mã hết hạn hoặc không còn hiệu lực. Hãy gửi lại mã."})
         record["attempts"] += 1
-        if fingerprint != record["fingerprint"] or not hmac.compare_digest(str(data.get("code", "")).encode(), record["code"].encode()):
-            return self.reply(400, {"error": "Mã không đúng hoặc cấu hình đã thay đổi."})
+        if not hmac.compare_digest(str(data.get("code", "")).encode(), record["code"].encode()):
+            return self.reply(400, {"error": "Mã không đúng."})
         record.pop("code")
-        self.reply(200, {"message": "OTP hợp lệ. Bản thử chưa áp dụng cấu hình DHCP."})
+        record["verified_until"] = min(now + 120, record["sent"] + 300)
+        self.reply(200, {"message": "OTP hợp lệ. Nhập lại mật khẩu admin web để xác nhận."})
 
 
 if __name__ == "__main__":
