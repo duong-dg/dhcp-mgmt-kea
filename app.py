@@ -35,6 +35,29 @@ PENDING_DIR = Path(os.getenv("KEA_PENDING_DIR", str(Path.home() / ".kea-dashboar
 PENDING_FILE = PENDING_DIR / "pending-vlan.json"
 
 
+def load_session_key():
+    PENDING_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path = PENDING_DIR / "session.key"
+    try:
+        key = path.read_bytes()
+    except FileNotFoundError:
+        with tempfile.NamedTemporaryFile(dir=PENDING_DIR, delete=False) as file:
+            draft = Path(file.name)
+            try:
+                file.write(secrets.token_bytes(32))
+                file.close()
+                try:
+                    os.link(draft, path)
+                except FileExistsError:
+                    pass
+            finally:
+                draft.unlink(missing_ok=True)
+        key = path.read_bytes()
+    if len(key) != 32:
+        raise ValueError("File khóa phiên không hợp lệ.")
+    return hmac.digest(key, WEB_PASSWORD.encode(), "sha256")
+
+
 def stage_plan(data):
     PENDING_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=PENDING_DIR, delete=False) as file:
@@ -359,18 +382,21 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
-    def authorized(self):
-        if self.headers.get("Host") != f"{WEB_BIND}:{self.server.server_port}":
-            self.reply(403, {"error": "Host không hợp lệ."})
-            return False
+    def has_session(self):
         try:
             cookie = SimpleCookie(self.headers.get("Cookie", ""))
             token = cookie["kea_session"].value
             expiry = int(token.split(".", 1)[0])
-            if expiry > time.time() and hmac.compare_digest(token.encode(), self.session_token(expiry).encode()):
-                return True
+            return expiry > time.time() and hmac.compare_digest(token.encode(), self.session_token(expiry).encode())
         except (CookieError, KeyError, ValueError):
-            pass
+            return False
+
+    def authorized(self):
+        if self.headers.get("Host") != f"{WEB_BIND}:{self.server.server_port}":
+            self.reply(403, {"error": "Host không hợp lệ."})
+            return False
+        if self.has_session():
+            return True
         if self.path.startswith("/api/"):
             self.reply(401, {"error": "Phiên đăng nhập đã hết hạn."})
         else:
@@ -466,6 +492,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/login" and self.headers.get("Host") == f"{WEB_BIND}:{self.server.server_port}":
+            if self.has_session():
+                return self.reply(303, b"", headers=[("Location", "/")])
             return self.login_page()
         if not self.authorized():
             return
@@ -523,6 +551,7 @@ if __name__ == "__main__":
         raise SystemExit("Truy cập qua proxy yêu cầu HTTPS.")
     if bool(TLS_CERT) != bool(TLS_KEY):
         raise SystemExit("HTTPS yêu cầu cả KEA_TLS_CERT và KEA_TLS_KEY.")
+    SESSION_KEY = load_session_key()
     with HTTPServer((WEB_BIND, port), Handler) as server:
         if TLS_CERT:
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)

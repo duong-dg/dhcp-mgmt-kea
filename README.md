@@ -27,8 +27,7 @@ cần mã hóa thông tin đăng nhập.
 
 Mật khẩu web là bắt buộc. Dashboard giới hạn 5 lần đăng nhập sai mỗi
 phút theo địa chỉ kết nối. Với reverse proxy, giới hạn này được chia sẻ
-cho các kết nối đến từ cùng proxy. Phiên đăng nhập hết hạn sau 8 giờ
-hoặc khi dịch vụ khởi động lại. Nếu dùng HTTPS qua reverse proxy, đặt
+cho các kết nối đến từ cùng proxy. Phiên đăng nhập hết hạn sau 8 giờ. Khóa phiên được lưu riêng trong thư mục dữ liệu của dịch vụ để duy trì phiên qua lần khởi động lại. Đổi mật khẩu web sẽ làm phiên cũ hết hiệu lực. Nếu dùng HTTPS qua reverse proxy, đặt
 KEA_WEB_ORIGIN đúng với URL HTTPS để cookie chỉ được gửi qua HTTPS.
 
 ## HTTPS trực tiếp
