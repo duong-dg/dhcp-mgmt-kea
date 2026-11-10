@@ -3,6 +3,7 @@ import base64
 import hmac
 import json
 import os
+import re
 import secrets
 import ssl
 import smtplib
@@ -29,7 +30,7 @@ SESSION_KEY = secrets.token_bytes(32)
 FAILED_LOGINS = {}
 LOGIN_WINDOW = 60
 LOGIN_LIMIT = 5
-OTP_REQUESTS = {}
+LOGIN_CHALLENGE = {}
 PENDING_DIR = Path(os.getenv("KEA_PENDING_DIR", str(Path.home() / ".kea-dashboard")))
 
 
@@ -67,7 +68,7 @@ def mail_otp(code):
         message["From"] = sender
         message["To"] = recipient
         message["Subject"] = "Kea DHCP Manager — Mã xác nhận"
-        message.set_content(f"Mã xác nhận cấu hình VLAN: {code}. Mã hết hạn sau 5 phút.")
+        message.set_content(f"Mã đăng nhập Kea DHCP Manager: {code}. Mã hết hạn sau 5 phút.")
         client.send_message(message)
 TRUNK = os.getenv("KEA_TRUNK_INTERFACE", "eth0")
 EXISTING_VLANS = {
@@ -203,6 +204,21 @@ def vlan_plan(data, allow_gateway_in_range=False):
     if dns:
         options.append({"name": "domain-name-servers", "data": ", ".join(dns)})
     return vlan, network, start, end, gateway, options
+
+
+def plan_preview(data):
+    if data.get("kind") == "reservation":
+        address = ip.IPv4Address(data["ip"])
+        network = ip.IPv4Network(data["subnet"])
+        mac = data["mac"].lower()
+        subnet_id = int(data["id"])
+        if not re.fullmatch(r"(?:[0-9a-f]{2}:){5}[0-9a-f]{2}", mac):
+            raise ValueError("MAC không hợp lệ.")
+        if not 0 < subnet_id < 4294967295 or address not in network:
+            raise ValueError("IP hoặc subnet ID không hợp lệ.")
+        return {"kind": "reservation", "id": subnet_id, "subnet": str(network),
+                "reservation": {"hw-address": mac, "ip-address": str(address)}}
+    return trunk_preview(data)
 
 
 def trunk_preview(data):
@@ -345,10 +361,14 @@ class Handler(BaseHTTPRequestHandler):
         digest = hmac.digest(SESSION_KEY, f"{WEB_USER}:{expiry}".encode(), "sha256")
         return f"{expiry}.{base64.urlsafe_b64encode(digest).decode()}"
 
-    def login_page(self, failed=False):
+    def login_page(self, failed=False, otp=False, headers=()):
         page = Path(__file__).with_name("login.html").read_text(encoding="utf-8")
         error = "Tên đăng nhập hoặc mật khẩu không đúng." if failed else ""
-        self.reply(401 if failed else 200, page.replace("{{error}}", error).encode(), "text/html")
+        if otp:
+            error = "Mã sai hoặc đã hết hạn." if failed else ""
+        page = page.replace("{{password-hidden}}", "hidden" if otp else "")
+        page = page.replace("{{otp-hidden}}", "" if otp else "hidden")
+        self.reply(401 if failed else 200, page.replace("{{error}}", error).encode(), "text/html", headers)
 
     def login_post(self):
         host = self.headers.get("Host")
@@ -376,12 +396,47 @@ class Handler(BaseHTTPRequestHandler):
             fields = parse_qs(self.rfile.read(size).decode())
         except ValueError:
             return self.reply(400, {"error": "Yêu cầu không hợp lệ."})
+        if not SECURE_WEB:
+            return self.reply(403, {"error": "Đăng nhập OTP yêu cầu HTTPS."})
+        if self.path == "/login/otp":
+            return self.verify_login_otp(fields, now)
         user_ok = hmac.compare_digest(fields.get("username", [""])[0].encode(), WEB_USER.encode())
         password_ok = hmac.compare_digest(fields.get("password", [""])[0].encode(), WEB_PASSWORD.encode())
         if not (user_ok and password_ok):
             FAILED_LOGINS[address] = (failures + 1, deadline)
             return self.login_page(failed=True)
-        FAILED_LOGINS.pop(address, None)
+        if now - LOGIN_CHALLENGE.get("sent", -LOGIN_WINDOW) < LOGIN_WINDOW:
+            return self.reply(429, {"error": "Đợi 60 giây trước khi yêu cầu mã mới."})
+        code = f"{secrets.randbelow(1000000):06d}"
+        nonce = secrets.token_urlsafe(32)
+        LOGIN_CHALLENGE.clear()
+        LOGIN_CHALLENGE["sent"] = now
+        try:
+            mail_otp(code)
+        except (KeyError, ValueError, OSError, smtplib.SMTPException):
+            return self.reply(502, {"error": "Không gửi được OTP. Kiểm tra SMTP."})
+        LOGIN_CHALLENGE.update(code=code, nonce=nonce, attempts=0)
+        self.login_page(otp=True, headers=[
+            ("Set-Cookie", f"kea_login={nonce}; Path=/login; Max-Age=300; HttpOnly; SameSite=Strict; Secure"),
+        ])
+
+    def verify_login_otp(self, fields, now):
+        try:
+            nonce = SimpleCookie(self.headers.get("Cookie", ""))["kea_login"].value
+        except (CookieError, KeyError):
+            nonce = ""
+        challenge = LOGIN_CHALLENGE
+        if (not nonce or not hmac.compare_digest(nonce.encode(), challenge.get("nonce", "").encode())
+                or now - challenge.get("sent", 0) >= 300 or challenge.get("attempts", 5) >= 5):
+            return self.login_page(failed=True, otp=True)
+        challenge["attempts"] += 1
+        code = fields.get("code", [""])[0]
+        if not hmac.compare_digest(code.encode(), challenge["code"].encode()):
+            return self.login_page(failed=True, otp=True)
+        challenge.pop("nonce")
+        challenge.pop("code")
+        FAILED_LOGINS.pop(self.client_address[0], None)
+        secure = "; Secure"
         age = 8 * 3600
         token = self.session_token(int(time.time()) + age)
         self.reply(303, b"", headers=[
@@ -402,13 +457,13 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(404, {"error": "Không tìm thấy."})
 
     def do_POST(self):
-        if self.path in ("/login", "/logout"):
+        if self.path in ("/login", "/login/otp", "/logout"):
             return self.login_post()
         if not self.authorized():
             return
         if self.path == "/api/subnets":
             return self.reply(403, {"error": "Áp dụng DHCP chưa được bật. Cần xác thực OTP và trình triển khai HA."})
-        if self.path not in ("/api/vlan-plan", "/api/otp/send", "/api/otp/verify", "/api/otp/confirm"):
+        if self.path not in ("/api/vlan-plan", "/api/stage-plan"):
             return self.reply(404, {"error": "Không tìm thấy."})
         origin = self.web_origin()
         if self.headers.get("Origin") != origin or self.headers.get_content_type() != "application/json":
@@ -419,53 +474,16 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("Kích thước dữ liệu không hợp lệ.")
             data = json.loads(self.rfile.read(size))
             if self.path == "/api/vlan-plan":
-                self.reply(200, trunk_preview(data))
+                self.reply(200, plan_preview(data))
             else:
-                self.otp(data)
+                plan_preview(data)
+                stage_plan(data)
+                self.reply(200, {"message": "Đã lưu thay đổi chờ áp dụng qua SSH."})
         except (ValueError, KeyError, TypeError) as error:
             self.reply(400, {"error": str(error)})
 
-    def otp(self, data):
-        if not SECURE_WEB:
-            return self.reply(403, {"error": "OTP yêu cầu HTTPS."})
-        plan = trunk_preview(data["plan"])
-        fingerprint = json.dumps(plan, sort_keys=True)
-        now = time.monotonic()
-        record = OTP_REQUESTS.get(WEB_USER)
-        session = SimpleCookie(self.headers.get("Cookie", ""))["kea_session"].value
-        if self.path == "/api/otp/send":
-            if record and now - record["sent"] < 60:
-                return self.reply(429, {"error": "Đợi 60 giây trước khi gửi lại mã."})
-            code = f"{secrets.randbelow(1000000):06d}"
-            OTP_REQUESTS[WEB_USER] = {"sent": now, "attempts": 0}
-            try:
-                mail_otp(code)
-            except (KeyError, ValueError, OSError, smtplib.SMTPException):
-                return self.reply(502, {"error": "Không gửi được OTP. Kiểm tra cấu hình SMTP và kết nối TLS."})
-            OTP_REQUESTS[WEB_USER].update(code=code, fingerprint=fingerprint, session=session)
-            return self.reply(200, {"message": "Đã gửi OTP đến hộp thư quản trị."})
-        if not record or record.get("session") != session or record.get("fingerprint") != fingerprint:
-            return self.reply(400, {"error": "Phiên hoặc cấu hình đã thay đổi. Hãy gửi lại mã."})
-        if self.path == "/api/otp/confirm":
-            if now >= record.get("verified_until", 0) or record.get("password_attempts", 0) >= 5:
-                return self.reply(400, {"error": "Xác nhận đã hết hiệu lực. Hãy gửi lại mã."})
-            record["password_attempts"] = record.get("password_attempts", 0) + 1
-            if not hmac.compare_digest(str(data.get("password", "")).encode(), WEB_PASSWORD.encode()):
-                return self.reply(401, {"error": "Mật khẩu web không đúng."})
-            try:
-                stage_plan(data["plan"])
-            except OSError:
-                return self.reply(500, {"error": "Không lưu được file cấu hình chờ trên máy chủ."})
-            record.pop("verified_until")
-            return self.reply(200, {"message": "Đã lưu VLAN chờ áp dụng trên máy chủ. Chạy apply_vlan.py qua SSH để kiểm tra và nạp Kea."})
-        if not record or not record.get("code") or now - record["sent"] >= 300 or record["attempts"] >= 5:
-            return self.reply(400, {"error": "Mã hết hạn hoặc không còn hiệu lực. Hãy gửi lại mã."})
-        record["attempts"] += 1
-        if not hmac.compare_digest(str(data.get("code", "")).encode(), record["code"].encode()):
-            return self.reply(400, {"error": "Mã không đúng."})
-        record.pop("code")
-        record["verified_until"] = min(now + 120, record["sent"] + 300)
-        self.reply(200, {"message": "OTP hợp lệ. Nhập lại mật khẩu admin web để xác nhận."})
+        except OSError:
+            self.reply(500, {"error": "Không lưu được thay đổi trên máy chủ."})
 
 
 if __name__ == "__main__":

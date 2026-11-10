@@ -8,7 +8,7 @@ import os
 import time
 from datetime import datetime, timezone
 
-from app import EXISTING_VLANS, NODES, PENDING_DIR, configurations, kea, subnets, trunk_preview
+from app import EXISTING_VLANS, NODES, PENDING_DIR, configurations, kea, subnets, plan_preview
 
 
 def health():
@@ -57,6 +57,13 @@ def build_candidates(original, plan):
 def verify_subnet(expected):
     for node, config in enumerate(configurations(), 1):
         match = next((subnet for subnet in subnets(config) if subnet["id"] == expected["id"]), {})
+        if expected.get("kind") == "reservation":
+            if match.get("subnet") != expected["subnet"] or not any(
+                all(item.get(key) == value for key, value in expected["reservation"].items())
+                for item in match.get("reservations", [])
+            ):
+                raise ValueError(f"Node {node}: reservation sau khi nạp không khớp.")
+            continue
         if any(match.get(key) != expected[key] for key in ("subnet", "interface", "user-context")):
             raise ValueError(f"Node {node}: không tìm thấy subnet mới sau khi nạp.")
         normalize = lambda pools: {pool["pool"].replace(" ", "") for pool in pools}
@@ -76,6 +83,34 @@ def wait_for_ha():
             time.sleep(3)
 
 
+def reservation_candidates(original, plan):
+    candidates = copy.deepcopy(original)
+    wanted = plan["reservation"]
+    address, mac = wanted["ip-address"], wanted["hw-address"]
+    for node, config in enumerate(candidates):
+        subnet = next((item for item in config.get("subnet4", [])
+                       if item["id"] == plan["id"] and item["subnet"] == plan["subnet"]), None)
+        if subnet is None:
+            raise ValueError(f"Node {node + 1}: cần subnet độc lập khớp với lease.")
+        if (config.get("hosts-database") or config.get("hosts-databases")
+                or (config.get("config-control") or {}).get("config-databases")
+                or not subnet.get("reservations-in-subnet", config.get("reservations-in-subnet", True))
+                or subnet.get("reservations-out-of-pool", config.get("reservations-out-of-pool", False))
+                or "hw-address" not in config.get("host-reservation-identifiers", ["hw-address"])):
+            raise ValueError(f"Node {node + 1}: chế độ reservation hiện tại không hỗ trợ thao tác này.")
+        leases = kea(node, "lease4-get", {"ip-address": address}, allow_empty=True)
+        if (leases.get("hw-address", "").lower() != mac or leases.get("subnet-id") != plan["id"]
+                or leases.get("state", 0) != 0
+                or leases.get("cltt", 0) + leases.get("valid-lft", 0) <= time.time()):
+            raise ValueError(f"Node {node + 1}: lease không còn hoạt động hoặc MAC đã thay đổi.")
+        reservations = subnet.setdefault("reservations", [])
+        if any(item.get("ip-address") == address or item.get("hw-address", "").lower() == mac
+               for item in [*config.get("reservations", []), *reservations]):
+            raise ValueError(f"Node {node + 1}: IP hoặc MAC đã có reservation.")
+        reservations.append(wanted)
+    return candidates, plan
+
+
 def run(apply, prepare=False):
     if not all(NODES) or NODES[0] == NODES[1]:
         raise ValueError("Cần hai URL Kea khác nhau.")
@@ -84,10 +119,13 @@ def run(apply, prepare=False):
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         pending = PENDING_DIR / "pending-vlan.json"
         raw = pending.read_bytes()
-        plan = trunk_preview(json.loads(raw))
+        plan = plan_preview(json.loads(raw))
         health()
         original = configurations()
-        candidates, expected = build_candidates(original, plan)
+        if plan.get("kind") == "reservation":
+            candidates, expected = reservation_candidates(original, plan)
+        else:
+            candidates, expected = build_candidates(original, plan)
         for node, candidate in enumerate(candidates):
             commands = kea(node, "list-commands")
             if not {"config-test", "config-set", "config-write"}.issubset(commands):

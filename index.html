@@ -31,19 +31,14 @@
 <p id="result" role="status"></p>
 <pre id="plan" class="scroll"></pre>
 <a class="back" id="download-plan" hidden>Tải cấu hình VLAN (.json)</a>
-<form id="otp-form" hidden>
-<button id="otp-send" type="button">Gửi OTP thử</button>
-<label>Mã OTP<input id="otp-code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" required></label>
-<button>Xác minh OTP</button>
-</form>
-<form id="confirm-form" hidden><label>Mật khẩu admin web<input id="confirm-password" type="password" autocomplete="current-password" required></label><button>Xác nhận mật khẩu</button></form>
-<p id="otp-status" role="status"></p>
+<button id="stage-vlan" type="button" hidden>Lưu kế hoạch chờ áp dụng</button>
 </details>
 <section id="vlan-detail" hidden></section>
 <section>
 <div class="bar"><div><h2 id="list-title">Tổng quan VLAN</h2><p id="list-description" class="muted">Chọn một VLAN để xem dải cấp phát và danh sách IP.</p></div><label id="search-label">Tìm theo VLAN, subnet hoặc thiết bị<input id="filter" type="search" placeholder="Nhập từ khóa"></label></div>
 <div class="scroll"><table id="data-table" class="vlan-list"><thead><tr id="headings"></tr></thead><tbody id="rows"></tbody></table></div>
 <p id="empty" class="muted" role="status"></p>
+<p id="reservation-status" class="muted" role="status"></p>
 </section>
 </main>
 <script>
@@ -132,7 +127,7 @@ function render() {
   const query = el('filter').value.trim().toLowerCase();
   const selected = isDetail && rows.find(row =>
     String(row.id) === selection.get('id') && row.cidr === selection.get('subnet'));
-  const titles = isDetail ? ['Địa chỉ IP', 'Hostname', 'MAC', 'Hết hạn'] :
+  const titles = isDetail ? ['Địa chỉ IP', 'Hostname', 'MAC', 'Hết hạn', 'Giữ IP'] :
     ['VLAN', 'Subnet', 'Lease hoạt động', 'Sử dụng pool', 'Chưa có lease trong pool'];
   el('headings').replaceChildren(...titles.map(title => textElement('th', title)));
   el('rows').replaceChildren();
@@ -147,6 +142,22 @@ function render() {
       const expiry = new Date((lease.cltt + lease['valid-lft']) * 1000);
       for (const value of [...leaseFields(lease), expiry.toLocaleString('vi-VN')]) {
         tr.insertCell().textContent = value || '—';
+      }
+      const cell = tr.insertCell();
+      if (!partial && /^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(lease['hw-address'])) {
+        const button = textElement('button', 'Giữ IP theo MAC');
+        button.type = 'button';
+        button.onclick = async () => {
+          if (!confirm('Giữ IP ' + lease['ip-address'] + ' cho MAC ' + lease['hw-address'] + '? Kế hoạch này thay bản chờ trước đó.')) return;
+          button.disabled = true;
+          try {
+            await stage({kind: 'reservation', id: selected.id, subnet: selected.cidr,
+              ip: lease['ip-address'], mac: lease['hw-address']}, 'reservation-status');
+          } finally {
+            button.disabled = false;
+          }
+        };
+        cell.append(button);
       }
     }
     el('empty').textContent = leases.length ? '' : selected ?
@@ -201,46 +212,31 @@ function clearDownload() {
 el('form').oninput = () => {
   previewedPlan = null;
   clearDownload();
-  el('otp-form').hidden = true;
-  el('confirm-form').hidden = true;
-  el('confirm-form').reset();
-  el('otp-status').textContent = '';
+  el('stage-vlan').hidden = true;
   el('plan').textContent = '';
   el('result').textContent = '';
 };
-async function otp(action) {
-  const plan = previewedPlan;
-  if (!plan) return;
+async function stage(plan, statusId) {
   try {
-    const response = await fetch('/api/otp/' + action, {
+    const response = await fetch('/api/stage-plan', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(action === 'confirm' ? {plan, password: el('confirm-password').value} : {plan, code: el('otp-code').value})
+      body: JSON.stringify(plan)
     });
+    if (response.status === 401) { location.assign('/login'); return; }
     const result = await response.json();
-    if (response.status === 401 && result.error === 'Phiên đăng nhập đã hết hạn.') {
-      location.assign('/login');
-      return;
-    }
-    if (previewedPlan !== plan) return;
-    el('otp-status').textContent = result.message || result.error;
-    if (response.ok && action === 'verify') el('confirm-form').hidden = false;
-    if (response.ok && action !== 'verify') el('confirm-form').hidden = true;
+    el(statusId).textContent = result.message || result.error;
   } catch (error) {
-    el('otp-status').textContent = error.message;
+    el(statusId).textContent = error.message;
   }
 }
-el('confirm-form').onsubmit = async event => {
-  event.preventDefault();
+el('stage-vlan').onclick = async () => {
+  if (!previewedPlan || !confirm('Lưu bản này và thay kế hoạch chờ trước đó?')) return;
+  el('stage-vlan').disabled = true;
   try {
-    await otp('confirm');
+    await stage(previewedPlan, 'result');
   } finally {
-    event.target.reset();
+    el('stage-vlan').disabled = false;
   }
-};
-el('otp-send').onclick = () => otp('send');
-el('otp-form').onsubmit = event => {
-  event.preventDefault();
-  otp('verify');
 };
 el('form').onsubmit = async event => {
   event.preventDefault();
@@ -260,8 +256,7 @@ el('form').onsubmit = async event => {
     el('download-plan').download = 'vlan-' + result.kea.subnet4['user-context']['vlan-id'] + '.json';
     el('download-plan').hidden = false;
     previewedPlan = data;
-    el('otp-code').value = '';
-    el('otp-form').hidden = false;
+    el('stage-vlan').hidden = false;
   } catch (error) {
     el('result').textContent = error.message;
   } finally {

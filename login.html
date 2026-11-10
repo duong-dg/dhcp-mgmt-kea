@@ -13,11 +13,18 @@
 <div class="eyebrow">QUẢN TRỊ MẠNG</div>
 <h1>Kea DHCP Manager</h1>
 <p>Đăng nhập để quản lý DHCP và xem địa chỉ IP theo VLAN.</p>
-<form method="post" action="/login">
+<form method="post" action="/login" {{password-hidden}}>
 <label>Tên đăng nhập<input name="username" autocomplete="username" required autofocus></label>
 <label>Mật khẩu<input name="password" type="password" autocomplete="current-password" required></label>
-<div class="error" role="alert">{{error}}</div>
+
 <button>Đăng nhập</button>
 </form>
+<form method="post" action="/login/otp" {{otp-hidden}}>
+<p>Nhập mã đã gửi đến hộp thư quản trị.</p>
+<label>Mã OTP<input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" required></label>
+<button>Xác minh và đăng nhập</button>
+<p><a href="/login">Quay lại đăng nhập</a></p>
+</form>
+<div class="error" role="alert">{{error}}</div>
 </main></body>
 </html>

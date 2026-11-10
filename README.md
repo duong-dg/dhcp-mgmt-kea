@@ -44,7 +44,7 @@ pool động. Số chưa có lease hoạt động được tính từ pool trừ
 hoạt động trong pool. IP giữ chỗ hoặc bị từ chối vẫn có thể không khả
 dụng. Các dải ngoài pool động vẫn có thể chứa IP tĩnh hoặc reservation.
 
-## Thử gửi OTP qua SMTP
+## Đăng nhập bằng OTP qua SMTP
 
 Đặt các biến dưới đây trong EnvironmentFile của systemd, giữ quyền 600.
 Web cần chạy HTTPS. Người nhận cố định từ cấu hình máy chủ.
@@ -60,14 +60,14 @@ KEA_SMTP_RECIPIENT=admin@example.net
 ```
 
 Nếu nhà cung cấp dùng TLS trực tiếp, đặt KEA_SMTP_TLS=ssl và cổng phù hợp.
-Khởi động lại dịch vụ, xem trước một VLAN, bấm Gửi OTP thử rồi nhập mã.
-OTP thử không ghi Netplan hoặc Kea. Cấu hình SMTP hiện nhập trên máy chủ.
+Khởi động lại dịch vụ, mở HTTPS và nhập tài khoản web để nhận mã OTP.
+SMTP cần hoạt động trước khi cập nhật vì phiên đăng nhập chỉ được tạo sau OTP.
 
 ## Lưu kế hoạch và áp dụng qua SSH
 
-Sau khi xác minh OTP và nhập lại mật khẩu, web lưu một kế hoạch chờ
+Sau khi đăng nhập bằng mật khẩu và OTP, web có thể lưu một kế hoạch chờ
 trong ~/.kea-dashboard/pending-vlan.json của tài khoản chạy dịch vụ.
-Kế hoạch mới thay thế kế hoạch chờ trước đó.
+Kế hoạch mới thay thế kế hoạch chờ trước đó. Trong trang VLAN, chọn Giữ IP theo MAC ở dòng lease để lưu kế hoạch reservation. Trình SSH kiểm tra lease còn hoạt động và MAC khớp trên cả hai node.
 
 Trình apply_vlan.py chạy trên Linux. Nó chỉ cấu hình Kea cho interface
 VLAN đã tồn tại và có IP đúng trên cả hai máy. KEA_A_URL phải trỏ tới
