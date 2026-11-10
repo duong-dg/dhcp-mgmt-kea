@@ -30,6 +30,7 @@
 </form>
 <p id="result" role="status"></p>
 <pre id="plan" class="scroll"></pre>
+<a class="back" id="download-plan" hidden>Tải cấu hình VLAN (.json)</a>
 <form id="otp-form" hidden>
 <button id="otp-send" type="button">Gửi OTP thử</button>
 <label>Mã OTP<input id="otp-code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" required></label>
@@ -190,8 +191,16 @@ async function load() {
 el('refresh').onclick = load;
 el('filter').oninput = render;
 let previewedPlan;
+let planUrl;
+function clearDownload() {
+  if (planUrl) URL.revokeObjectURL(planUrl);
+  planUrl = null;
+  el('download-plan').removeAttribute('href');
+  el('download-plan').hidden = true;
+}
 el('form').oninput = () => {
   previewedPlan = null;
+  clearDownload();
   el('otp-form').hidden = true;
   el('confirm-form').hidden = true;
   el('confirm-form').reset();
@@ -237,6 +246,7 @@ el('form').onsubmit = async event => {
   event.preventDefault();
   const data = Object.fromEntries(new FormData(event.target));
   el('save').disabled = true;
+  clearDownload();
   el('plan').textContent = '';
   try {
     const response = await fetch('/api/vlan-plan', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
@@ -244,6 +254,11 @@ el('form').onsubmit = async event => {
     if (!response.ok) throw new Error(result.error);
     el('result').textContent = 'Cấu hình dự kiến cho hai node.';
     el('plan').textContent = JSON.stringify(result, null, 2);
+    const file = new Blob([JSON.stringify(result, null, 2) + '\n'], {type: 'application/json'});
+    planUrl = URL.createObjectURL(file);
+    el('download-plan').href = planUrl;
+    el('download-plan').download = 'vlan-' + result.kea.subnet4['user-context']['vlan-id'] + '.json';
+    el('download-plan').hidden = false;
     previewedPlan = data;
     el('otp-code').value = '';
     el('otp-form').hidden = false;
