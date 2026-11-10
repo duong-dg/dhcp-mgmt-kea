@@ -134,7 +134,8 @@ def subnets(config):
 
 
 def configurations():
-    return [kea(node, "config-get")["Dhcp4"] for node in range(2)]
+    with ThreadPoolExecutor(2) as executor:
+        return list(executor.map(lambda node: kea(node, "config-get")["Dhcp4"], range(2)))
 
 
 def pool_summary(row):

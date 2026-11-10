@@ -6,6 +6,7 @@ import ipaddress
 import json
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from app import EXISTING_VLANS, NODES, PENDING_DIR, configurations, kea, subnets, plan_preview
@@ -13,8 +14,9 @@ from app import EXISTING_VLANS, NODES, PENDING_DIR, configurations, kea, subnets
 
 def health():
     roles = []
-    for node in range(2):
-        status = kea(node, "status-get")
+    with ThreadPoolExecutor(2) as executor:
+        statuses = list(executor.map(lambda node: kea(node, "status-get"), range(2)))
+    for node, status in enumerate(statuses):
         relationships = status.get("high-availability", [])
         if len(relationships) != 1:
             raise ValueError(f"Node {node + 1}: cần đúng một quan hệ HA.")
@@ -81,7 +83,7 @@ def wait_for_ha():
         except ValueError:
             if time.monotonic() >= deadline:
                 raise
-            time.sleep(3)
+            time.sleep(1)
 
 
 def reservation_candidates(original, plan):
@@ -135,11 +137,14 @@ def run(apply, prepare=False, reservation=None):
             candidates, expected = reservation_candidates(original, plan)
         else:
             candidates, expected = build_candidates(original, plan)
-        for node, candidate in enumerate(candidates):
+        def test_candidate(node):
             commands = kea(node, "list-commands")
             if not {"config-test", "config-set", "config-write"}.issubset(commands):
                 raise ValueError(f"Node {node + 1}: thiếu lệnh kiểm tra, nạp hoặc lưu cấu hình.")
-            kea(node, "config-test", {"Dhcp4": candidate})
+            kea(node, "config-test", {"Dhcp4": candidates[node]})
+
+        with ThreadPoolExecutor(2) as executor:
+            list(executor.map(test_candidate, range(2)))
         print(f"Hai node đã qua config-test. Subnet {expected['subnet']}, ID {expected['id']}.", flush=True)
         if not apply and not prepare:
             return
