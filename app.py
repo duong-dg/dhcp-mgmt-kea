@@ -144,16 +144,17 @@ def read_node(node):
     return config, leases, errors
 
 
-def vlan_plan(data):
+def vlan_plan(data, allow_gateway_in_range=False):
     vlan = int(data["vlan"])
     network = ip.IPv4Network(data["cidr"])
     start, end, gateway = (ip.IPv4Address(data[key]) for key in ("start", "end", "gateway"))
     if not 1 <= vlan <= 4094:
         raise ValueError("VLAN ID phải từ 1 đến 4094.")
     if not (network.network_address < start <= end < network.broadcast_address
-            and network.network_address < gateway < network.broadcast_address
-            and not start <= gateway <= end):
-        raise ValueError("Pool và gateway phải nằm trong subnet. Gateway phải nằm ngoài pool.")
+            and network.network_address < gateway < network.broadcast_address):
+        raise ValueError("Dải cấp DHCP và gateway phải nằm trong phần IP dùng được của subnet.")
+    if not allow_gateway_in_range and start <= gateway <= end:
+        raise ValueError("Gateway phải nằm ngoài pool.")
     options = [{"name": "routers", "data": str(gateway)}]
     dns = [str(ip.IPv4Address(value.strip())) for value in data.get("dns", "").split(",") if value.strip()]
     if dns:
@@ -162,13 +163,38 @@ def vlan_plan(data):
 
 
 def trunk_preview(data):
-    vlan, network, start, end, gateway, options = vlan_plan(data)
+    vlan, network, start, end, gateway, options = vlan_plan(data, allow_gateway_in_range=True)
     addresses = [ip.IPv4Address(data[key]) for key in ("standby", "primary")]
     if len(set(addresses)) != 2 or any(
         not network.network_address < address < network.broadcast_address
-        or address == gateway or start <= address <= end for address in addresses
+        or address == gateway for address in addresses
     ):
-        raise ValueError("IP hai node phải khác nhau, nằm trong subnet và nằm ngoài pool, gateway.")
+        raise ValueError("IP hai node phải nằm trong subnet, khác nhau và khác gateway.")
+    exclusions = [(int(address), int(address)) for address in [gateway, *addresses]]
+    for item in data.get("exclude", "").replace(",", "\n").splitlines():
+        if not item.strip():
+            continue
+        bounds = item.split("-", 1)
+        first = ip.IPv4Address(bounds[0].strip())
+        last = ip.IPv4Address(bounds[-1].strip())
+        if not start <= first <= last <= end:
+            raise ValueError(f"Dải loại trừ phải nằm trong dải dự kiến cấp DHCP: {item.strip()}")
+        exclusions.append((int(first), int(last)))
+    pools = []
+    cursor = int(start)
+    limit = int(end)
+    for first, last in sorted(exclusions):
+        if last < cursor:
+            continue
+        if first > limit:
+            break
+        if cursor < first:
+            pools.append({"pool": f"{ip.IPv4Address(cursor)} - {ip.IPv4Address(first - 1)}"})
+        cursor = last + 1
+    if cursor <= limit:
+        pools.append({"pool": f"{ip.IPv4Address(cursor)} - {end}"})
+    if not pools:
+        raise ValueError("Không còn IP để cấp DHCP sau khi áp dụng loại trừ.")
     interface = f"{TRUNK}.{vlan}"
     return {
         "netplan": {
@@ -180,7 +206,7 @@ def trunk_preview(data):
         "kea": {"interface_to_add": interface, "subnet4": {
             "subnet": str(network), "interface": interface,
             "user-context": {"vlan-id": vlan},
-            "pools": [{"pool": f"{start} - {end}"}], "option-data": options,
+            "pools": pools, "option-data": options,
         }},
     }
 
