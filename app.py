@@ -204,7 +204,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
     def authorized(self):
-        if self.headers.get("Host") != f"127.0.0.1:{self.server.server_port}":
+        if self.headers.get("Host") != f"{WEB_BIND}:{self.server.server_port}":
             self.reply(403, {"error": "Host không hợp lệ."})
             return False
         if not WEB_PASSWORD:
@@ -253,9 +253,9 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8080"))
-    if WEB_BIND != "127.0.0.1":
-        raise SystemExit("Dùng reverse proxy HTTPS trước backend loopback.")
+    if not ip.IPv4Address(WEB_BIND).is_loopback and not WEB_PASSWORD:
+        raise SystemExit("Truy cập qua mạng yêu cầu KEA_WEB_PASSWORD.")
     if WEB_ORIGIN and (not WEB_ORIGIN.startswith("https://") or not WEB_PASSWORD):
         raise SystemExit("Truy cập qua proxy yêu cầu HTTPS và KEA_WEB_PASSWORD.")
-    print(f"Kea DHCP Manager: http://127.0.0.1:{port}", flush=True)
+    print(f"Kea DHCP Manager: http://{WEB_BIND}:{port}", flush=True)
     HTTPServer((WEB_BIND, port), Handler).serve_forever()

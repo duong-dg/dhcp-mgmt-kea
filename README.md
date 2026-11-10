@@ -19,3 +19,8 @@ Cần Python 3.10+. Trên Windows, chạy `.Start-KeaDashboard.ps1` để nhập
 Mở http://127.0.0.1:8080. Khi chạy trên máy chủ, dùng SSH port forwarding hoặc reverse proxy HTTPS. Với reverse proxy, chuyển tiếp Authorization và đặt upstream Host thành 127.0.0.1:8080. Lưu bí mật bên ngoài repository. Hai node cần hỗ trợ config-get và lease4-get-all.
 
 Form VLAN tạo bản xem trước Netplan và Kea. Việc áp dụng cấu hình mạng lên hai node thực hiện riêng theo quy trình quản trị của hệ thống.
+
+Để chạy thử trực tiếp trên mạng quản trị, đặt KEA_WEB_BIND thành IPv4 của
+máy chủ, PORT thành cổng mong muốn và KEA_WEB_PASSWORD thành mật khẩu web.
+Chế độ này dùng HTTP. Dùng HTTPS qua reverse proxy hoặc SSH tunnel nếu
+cần mã hóa thông tin đăng nhập.
