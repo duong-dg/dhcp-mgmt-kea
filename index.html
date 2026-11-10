@@ -47,6 +47,7 @@ const el = id => document.getElementById(id);
 let rows = [];
 let partial = false;
 let pendingReservation = null;
+let autoReservations = false;
 const selection = new URLSearchParams(location.search);
 const isDetail = location.pathname === '/vlan';
 el('back').hidden = !isDetail;
@@ -187,13 +188,14 @@ function render() {
         button.type = 'button';
         button.onclick = async () => {
           const prompt = title + ' cho ' + ip + ' · ' + mac + '?' +
-            (pending ? '' : ' Thao tác này thay bản chờ trước đó.');
+            (pending || autoReservations ? '' : ' Thao tác này thay bản chờ trước đó.');
           if (!confirm(prompt)) return;
           button.disabled = true;
+          if (autoReservations && !pending) el('reservation-status').textContent = 'Đang kiểm tra và áp dụng trên hai node Kea…';
           try {
             const ok = await stage({kind: pending || (nodes ? 'remove-reservation' : 'reservation'),
               id: selected.id, subnet: selected.cidr, ip, mac}, 'reservation-status',
-              pending ? '/api/cancel-reservation' : '/api/stage-plan');
+              pending ? '/api/cancel-reservation' : autoReservations ? '/api/apply-reservation' : '/api/stage-plan');
             if (ok) await load();
           } finally {
             button.disabled = false;
@@ -229,6 +231,7 @@ async function load() {
     const data = await response.json();
     rows = data.rows;
     pendingReservation = data.pending_reservation;
+    autoReservations = data.auto_reservations;
     partial = Boolean(data.errors.length);
     el('count').textContent = rows.length;
     el('total').textContent = data.errors.length ? data.total + '*' : data.total;

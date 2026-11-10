@@ -89,3 +89,10 @@ Trong bảng VLAN, Chờ giữ IP hoặc Chờ bỏ giữ nghĩa là yêu cầu 
 web. Hủy yêu cầu chờ xóa kế hoạch chưa nạp. Đang giữ · 2/2 node nghĩa là
 cả hai node báo cùng reservation. Bỏ giữ tạo kế hoạch xóa đúng cặp IP/MAC
 và vẫn cần nạp qua SSH. Reservation còn hiện trong bảng khi lease hết hạn.
+
+Để bật nút giữ/bỏ giữ áp dụng trực tiếp, đặt KEA_AUTO_RESERVATIONS=1
+trong EnvironmentFile của dashboard và dùng HTTPS. Cả hai Kea phải cho
+phép config-write lưu file cấu hình chính. Web kiểm tra config-test và
+khả năng lưu cấu hình hiện tại trước khi nạp reservation mới. Nếu cổng
+quản trị chỉ đọc hoặc không ghi được file, thao tác dừng trước khi đổi
+reservation. Nút hủy yêu cầu chờ chỉ xóa kế hoạch chưa nạp.

@@ -120,15 +120,15 @@ def reservation_candidates(original, plan):
     return candidates, plan
 
 
-def run(apply, prepare=False):
+def run(apply, prepare=False, reservation=None):
     if not all(NODES) or NODES[0] == NODES[1]:
         raise ValueError("Cần hai URL Kea khác nhau.")
     PENDING_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
     with (PENDING_DIR / "apply.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         pending = PENDING_DIR / "pending-vlan.json"
-        raw = pending.read_bytes()
-        plan = plan_preview(json.loads(raw))
+        raw = pending.read_bytes() if reservation is None else None
+        plan = plan_preview(json.loads(raw)) if reservation is None else reservation
         health()
         original = configurations()
         if plan.get("kind") in ("reservation", "remove-reservation"):
@@ -143,7 +143,7 @@ def run(apply, prepare=False):
         print(f"Hai node đã qua config-test. Subnet {expected['subnet']}, ID {expected['id']}.", flush=True)
         if not apply and not prepare:
             return
-        if configurations() != original or pending.read_bytes() != raw:
+        if configurations() != original or (raw is not None and pending.read_bytes() != raw):
             raise ValueError("Cấu hình hoặc file chờ vừa thay đổi. Hãy kiểm tra lại.")
         backup = PENDING_DIR / datetime.now(timezone.utc).strftime("backup-%Y%m%dT%H%M%S-%fZ")
         backup.mkdir(mode=0o700)
@@ -156,6 +156,12 @@ def run(apply, prepare=False):
                 path.write_text(json.dumps({"Dhcp4": config}, indent=2) + "\n", encoding="utf-8")
                 print(f"Node {node}: {path}", flush=True)
             return
+        if reservation is not None:
+            # Verify persistence of each node's current configuration before changing either node.
+            for node in range(2):
+                kea(node, "config-write")
+            if configurations() != original:
+                raise ValueError("Cấu hình Kea vừa thay đổi. Hãy làm mới và thử lại.")
         attempted = []
         try:
             for node, candidate in enumerate(candidates):
@@ -164,14 +170,18 @@ def run(apply, prepare=False):
                 kea(node, "config-write")
             verify_subnet(expected)
             wait_for_ha()
-        except (Exception, KeyboardInterrupt):
+        except (Exception, KeyboardInterrupt) as error:
+            failures = []
             for node in reversed(attempted):
                 try:
                     kea(node, "config-set", {"Dhcp4": original[node]})
                     kea(node, "config-write")
                     print(f"Node {node + 1}: đã nạp lại và lưu cấu hình cũ.", flush=True)
-                except Exception as error:
-                    print(f"Node {node + 1}: hoàn tác lỗi, cần đối soát từ bản sao: {error}", flush=True)
+                except Exception as rollback_error:
+                    failures.append(f"Node {node + 1}: {rollback_error}")
+            if failures:
+                raise ValueError(f"{error} Hoàn tác chưa hoàn tất. Bản sao: {backup}. "
+                                 + " | ".join(failures)) from error
             raise
         print("Đã áp dụng và xác minh subnet mới trên cả hai node.", flush=True)
 

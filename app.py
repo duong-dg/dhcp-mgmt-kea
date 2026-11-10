@@ -19,6 +19,7 @@ from urllib.request import Request, urlopen
 
 NODES = [os.getenv("KEA_A_URL"), os.getenv("KEA_B_URL")]
 WRITES = os.getenv("KEA_ENABLE_WRITES") == "1"
+AUTO_RESERVATIONS = os.getenv("KEA_AUTO_RESERVATIONS") == "1"
 WEB_BIND = os.getenv("KEA_WEB_BIND", "127.0.0.1")
 WEB_USER = os.getenv("KEA_WEB_USER", "admin")
 WEB_PASSWORD = os.getenv("KEA_WEB_PASSWORD", "")
@@ -214,6 +215,7 @@ def dashboard():
         pass
     return {"rows": list(rows.values()), "errors": [e for _, _, errors in nodes for e in errors],
             "pending_reservation": pending,
+            "auto_reservations": AUTO_RESERVATIONS,
             "writes": WRITES, "total": len(leases)}
 
 
@@ -511,7 +513,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/subnets":
             return self.reply(403, {"error": "Áp dụng DHCP chưa được bật. Cần xác thực OTP và trình triển khai HA."})
-        if self.path not in ("/api/vlan-plan", "/api/stage-plan", "/api/cancel-reservation"):
+        if self.path not in ("/api/vlan-plan", "/api/stage-plan", "/api/cancel-reservation", "/api/apply-reservation"):
             return self.reply(404, {"error": "Không tìm thấy."})
         origin = self.web_origin()
         if self.headers.get("Origin") != origin or self.headers.get_content_type() != "application/json":
@@ -523,6 +525,15 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(self.rfile.read(size))
             if self.path == "/api/vlan-plan":
                 self.reply(200, plan_preview(data))
+            elif self.path == "/api/apply-reservation":
+                if not SECURE_WEB or not AUTO_RESERVATIONS:
+                    return self.reply(403, {"error": "Áp dụng tự động chưa được bật qua HTTPS."})
+                plan = plan_preview(data)
+                if plan.get("kind") not in ("reservation", "remove-reservation"):
+                    return self.reply(400, {"error": "Chỉ hỗ trợ giữ IP và bỏ giữ IP."})
+                from apply_vlan import run
+                run(True, reservation=plan)
+                self.reply(200, {"message": "Đã xác minh thay đổi giữ IP trên cả hai node."})
             elif self.path == "/api/cancel-reservation":
                 try:
                     current = plan_preview(json.loads(PENDING_FILE.read_text(encoding="utf-8")))
