@@ -5,7 +5,7 @@
 <title>Kea DHCP Manager</title>
 <style>
 *{box-sizing:border-box}body{margin:0;background:#f1f5f9;color:#14243c;font:15px system-ui,sans-serif}header{background:#12243b;color:white;padding:24px max(5vw,20px)}header small{color:#9de1d2;letter-spacing:.13em}h1{margin:5px 0}main{max-width:1200px;margin:auto;padding:25px 20px}section,details.form{background:white;border:1px solid #dce4ee;border-radius:14px;padding:20px;margin:15px 0}.bar{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}h2,p{margin:0 0 8px}.stats{display:flex;gap:30px;flex-wrap:wrap}.stats strong{font-size:28px;display:block}button{background:#096957;color:white;border:0;border-radius:8px;padding:10px 16px;font:inherit;cursor:pointer}button:disabled{opacity:.55;cursor:default}input{display:block;width:100%;padding:10px;border:1px solid #b8c6d6;border-radius:7px;margin-top:5px;font:inherit}form{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:14px}summary{cursor:pointer;font-weight:600}.scroll{overflow:auto}table{border-collapse:collapse;width:100%;text-align:left}th,td{padding:12px;border-bottom:1px solid #e2e8f0;vertical-align:top}th{white-space:nowrap;background:#f8fafc}td li{white-space:nowrap}#notice{white-space:pre-wrap;color:#8a3912}#result{margin-top:12px}.muted{color:#506078}
-.lease-table{margin-top:8px;font-size:13px;min-width:485px}.lease-table th,.lease-table td{padding:8px;white-space:nowrap}.lease-table td:first-child{font-family:monospace;color:#096957}.logout{display:block;margin:0}.logout button{background:#ffffff20}#empty{margin-top:12px}</style>
+.lease-table{margin-top:8px;font-size:13px;min-width:485px}.lease-table th,.lease-table td{padding:8px;white-space:nowrap}.lease-table td:first-child{font-family:monospace;color:#096957}.logout{display:block;margin:0}.logout button{background:#ffffff20}#empty{margin-top:12px}.capacity{display:flex;gap:16px;flex-wrap:wrap;margin:12px 0}.capacity span{background:#edf7f5;padding:8px 12px;border-radius:8px}.lease-details{margin:0}.excluded{margin:8px 0}.lease-details summary{color:#096957}.capacity progress{width:100%;accent-color:#096957}</style>
 <header class="bar"><div><small>QUẢN TRỊ MẠNG / DHCPV4</small><h1>Kea DHCP Manager</h1><div>Theo dõi subnet và địa chỉ đã cấp trên cặp máy chủ HA</div></div><form class="logout" method="post" action="/logout"><button>Đăng xuất</button></form></header>
 <main>
 <section class="bar">
@@ -31,13 +31,14 @@
 </details>
 <section>
 <div class="bar"><div><h2>Subnet và lease</h2><p class="muted">VLAN ID lấy từ Kea hoặc từ ánh xạ của dashboard.</p></div><label>Tìm VLAN, IP, MAC hoặc hostname<input id="filter" type="search" placeholder="Ví dụ 20 hoặc 192.168"></label></div>
-<div class="scroll"><table><thead><tr><th>VLAN</th><th>Subnet</th><th>Pool IP</th><th>Node có subnet</th><th>IP đã cấp</th></tr></thead><tbody id="rows"></tbody></table></div>
+<div class="scroll"><table><thead><tr><th>VLAN và lease</th><th>Subnet</th><th>Pool IP</th><th>Node có subnet</th></tr></thead><tbody id="rows"></tbody></table></div>
 <p id="empty" class="muted"></p>
 </section>
 </main>
 <script>
 const el = id => document.getElementById(id);
 let rows = [];
+let partial = false;
 function render() {
   const query = el('filter').value.trim();
   const visible = rows.filter(row => [row.vlan, row.cidr, ...row.leases.flatMap(lease => [lease["ip-address"], lease.hostname, lease["hw-address"]])].some(value => String(value ?? "").toLowerCase().includes(query.toLowerCase())));
@@ -45,17 +46,38 @@ function render() {
   el('empty').textContent = visible.length ? '' : 'Không có subnet để hiển thị.';
   for (const row of visible) {
     const tr = el('rows').insertRow();
-    for (const value of [row.vlan ?? 'Chưa gán', row.cidr, row.pools.join(', ') || '—', row.nodes.join(', ')]) {
+    const cell = tr.insertCell();
+    for (const value of [row.cidr, row.pools.join(', ') || '—', row.nodes.join(', ')]) {
       tr.insertCell().textContent = value;
     }
-    const cell = tr.insertCell();
-    if (!row.leases.length) {
-      cell.textContent = '0';
-      continue;
-    }
     const details = document.createElement('details');
+    details.className = 'lease-details';
     const summary = document.createElement('summary');
-    summary.textContent = row.leases.length + ' IP · Xem danh sách';
+    const vlan = row.vlan == null ? 'Chưa gán VLAN' : 'VLAN ' + row.vlan;
+    summary.textContent = vlan + ' · ' + row.leases.length + (partial ? '*' : '') + ' IP đã cấp';
+    const capacity = document.createElement('div');
+    capacity.className = 'capacity';
+    const stats = row.capacity;
+    for (const label of [
+      stats.size + ' IP trong pool',
+      stats.used + ' đang cấp trong pool',
+      partial ? 'Chưa đủ dữ liệu để tính số còn lại' : stats.remaining + ' chưa có lease hoạt động'
+    ]) {
+      const badge = document.createElement('span');
+      badge.textContent = label;
+      capacity.append(badge);
+    }
+    if (stats.size) {
+      const progress = document.createElement('progress');
+      progress.max = stats.size;
+      progress.value = stats.used;
+      progress.setAttribute('aria-label', 'IP đang cấp trong pool');
+      capacity.append(progress);
+    }
+    const excluded = document.createElement('p');
+    excluded.className = 'excluded muted';
+    const ranges = stats.excluded.map(([start, end]) => start === end ? start : start + ' – ' + end);
+    excluded.textContent = 'Dải ngoài pool động · ' + (ranges.join(', ') || 'Không có');
     const scroll = document.createElement('div');
     scroll.className = 'scroll';
     const table = document.createElement('table');
@@ -75,7 +97,7 @@ function render() {
       }
     }
     scroll.append(table);
-    details.append(summary, scroll);
+    details.append(summary, capacity, excluded, scroll);
     cell.append(details);
   }
 }
@@ -87,6 +109,7 @@ async function load() {
     if (!response.ok) throw new Error('Không thể tải dashboard.');
     const data = await response.json();
     rows = data.rows;
+    partial = Boolean(data.errors.length);
     el('count').textContent = rows.length;
     el('total').textContent = data.errors.length ? data.total + '*' : data.total;
     el('health').textContent = data.errors.length ? 'Thiếu dữ liệu' : 'Đủ 2 node';

@@ -30,3 +30,16 @@ phút theo địa chỉ kết nối. Với reverse proxy, giới hạn này đư
 cho các kết nối đến từ cùng proxy. Phiên đăng nhập hết hạn sau 8 giờ
 hoặc khi dịch vụ khởi động lại. Nếu dùng HTTPS qua reverse proxy, đặt
 KEA_WEB_ORIGIN đúng với URL HTTPS để cookie chỉ được gửi qua HTTPS.
+
+## HTTPS trực tiếp
+
+Cài chứng thư có SAN khớp địa chỉ IP máy chủ và được máy khách tin cậy.
+Đặt KEA_TLS_CERT và KEA_TLS_KEY thành đường dẫn PEM trên máy chủ, rồi
+khởi động lại dịch vụ và mở https://<IP>:<PORT>/. Tài khoản chạy web
+cần quyền đọc khóa riêng. Nếu dùng HTTPS trực tiếp, bỏ KEA_WEB_ORIGIN
+dành cho reverse proxy.
+
+Bấm tên VLAN để xem sức chứa pool, lease hoạt động và các dải ngoài
+pool động. Số chưa có lease hoạt động được tính từ pool trừ lease đang
+hoạt động trong pool. IP giữ chỗ hoặc bị từ chối vẫn có thể không khả
+dụng. Các dải ngoài pool động vẫn có thể chứa IP tĩnh hoặc reservation.

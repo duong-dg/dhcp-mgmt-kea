@@ -4,6 +4,7 @@ import hmac
 import json
 import os
 import secrets
+import ssl
 import time
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -18,6 +19,9 @@ WEB_BIND = os.getenv("KEA_WEB_BIND", "127.0.0.1")
 WEB_USER = os.getenv("KEA_WEB_USER", "admin")
 WEB_PASSWORD = os.getenv("KEA_WEB_PASSWORD", "")
 WEB_ORIGIN = os.getenv("KEA_WEB_ORIGIN")
+TLS_CERT = os.getenv("KEA_TLS_CERT")
+TLS_KEY = os.getenv("KEA_TLS_KEY")
+SECURE_WEB = bool(TLS_CERT or WEB_ORIGIN)
 SESSION_KEY = secrets.token_bytes(32)
 FAILED_LOGINS = {}
 LOGIN_WINDOW = 60
@@ -64,6 +68,36 @@ def configurations():
     return [kea(node, "config-get")["Dhcp4"] for node in range(2)]
 
 
+def pool_summary(row):
+    network = ip.IPv4Network(row["cidr"])
+    first = int(network.network_address) + (network.prefixlen < 31)
+    last = int(network.broadcast_address) - (network.prefixlen < 31)
+    ranges = []
+    for pool in row["pools"]:
+        if "-" in pool:
+            start, end = (ip.IPv4Address(value.strip()) for value in pool.split("-", 1))
+        else:
+            prefix = ip.IPv4Network(pool.strip())
+            start, end = prefix.network_address, prefix.broadcast_address
+        ranges.append((int(start), int(end)))
+    merged = []
+    for start, end in sorted(ranges):
+        if merged and start <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(end, merged[-1][1]))
+        else:
+            merged.append((start, end))
+    excluded = []
+    cursor = first
+    for start, end in [*merged, (last + 1, last + 1)]:
+        if cursor < start:
+            excluded.append([str(ip.IPv4Address(cursor)), str(ip.IPv4Address(start - 1))])
+        cursor = max(cursor, end + 1)
+    used = sum(any(start <= int(ip.IPv4Address(lease["ip-address"])) <= end
+                   for start, end in merged) for lease in row["leases"])
+    size = sum(end - start + 1 for start, end in merged)
+    return {"size": size, "used": used, "remaining": size - used, "excluded": excluded}
+
+
 def dashboard():
     with ThreadPoolExecutor(2) as executor:
         nodes = list(executor.map(read_node, range(2)))
@@ -91,6 +125,7 @@ def dashboard():
             if subnet_id == row["id"] and ip.IPv4Address(address) in ip.IPv4Network(row["cidr"])
         ]
         row["leases"].sort(key=lambda lease: ip.IPv4Address(lease["ip-address"]))
+        row["capacity"] = pool_summary(row)
     return {"rows": list(rows.values()), "errors": [e for _, _, errors in nodes for e in errors],
             "writes": WRITES, "total": len(leases)}
 
@@ -201,6 +236,10 @@ def create(data):
 
 
 class Handler(BaseHTTPRequestHandler):
+    def web_origin(self):
+        scheme = "https" if TLS_CERT else "http"
+        return WEB_ORIGIN or f"{scheme}://{self.headers.get('Host')}"
+
     def reply(self, status, content, kind="application/json", headers=()):
         payload = content if isinstance(content, bytes) else json.dumps(content, ensure_ascii=False).encode()
         self.send_response(status)
@@ -244,9 +283,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def login_post(self):
         host = self.headers.get("Host")
-        if host != f"{WEB_BIND}:{self.server.server_port}" or self.headers.get("Origin") != (WEB_ORIGIN or f"http://{host}"):
+        if host != f"{WEB_BIND}:{self.server.server_port}" or self.headers.get("Origin") != self.web_origin():
             return self.reply(403, {"error": "Yêu cầu không hợp lệ."})
-        secure = "; Secure" if WEB_ORIGIN else ""
+        secure = "; Secure" if SECURE_WEB else ""
         if self.path == "/logout":
             return self.reply(303, b"", headers=[
                 ("Location", "/login"),
@@ -300,7 +339,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path not in ("/api/subnets", "/api/vlan-plan"):
             return self.reply(404, {"error": "Không tìm thấy."})
-        origin = WEB_ORIGIN or f"http://{self.headers.get('Host')}"
+        origin = self.web_origin()
         if self.headers.get("Origin") != origin or self.headers.get_content_type() != "application/json":
             return self.reply(403, {"error": "Yêu cầu không hợp lệ."})
         try:
@@ -322,5 +361,14 @@ if __name__ == "__main__":
         raise SystemExit("Cần đặt KEA_WEB_PASSWORD để khởi động dashboard.")
     if WEB_ORIGIN and not WEB_ORIGIN.startswith("https://"):
         raise SystemExit("Truy cập qua proxy yêu cầu HTTPS.")
-    print(f"Kea DHCP Manager: http://{WEB_BIND}:{port}", flush=True)
-    HTTPServer((WEB_BIND, port), Handler).serve_forever()
+    if bool(TLS_CERT) != bool(TLS_KEY):
+        raise SystemExit("HTTPS yêu cầu cả KEA_TLS_CERT và KEA_TLS_KEY.")
+    with HTTPServer((WEB_BIND, port), Handler) as server:
+        if TLS_CERT:
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
+            context.load_cert_chain(TLS_CERT, TLS_KEY)
+            server.socket = context.wrap_socket(server.socket, server_side=True)
+        scheme = "https" if TLS_CERT else "http"
+        print(f"Kea DHCP Manager: {scheme}://{WEB_BIND}:{port}", flush=True)
+        server.serve_forever()
