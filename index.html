@@ -5,14 +5,15 @@
 <title>Kea DHCP Manager</title>
 <style>
 *{box-sizing:border-box}body{margin:0;background:#f1f5f9;color:#14243c;font:15px system-ui,sans-serif}header{background:#12243b;color:white;padding:24px max(5vw,20px)}header small{color:#9de1d2;letter-spacing:.13em}h1{margin:5px 0}main{max-width:1200px;margin:auto;padding:25px 20px}section,details.form{background:white;border:1px solid #dce4ee;border-radius:14px;padding:20px;margin:15px 0}.bar{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}h2,p{margin:0 0 8px}.stats{display:flex;gap:30px;flex-wrap:wrap}.stats strong{font-size:28px;display:block}button{background:#096957;color:white;border:0;border-radius:8px;padding:10px 16px;font:inherit;cursor:pointer}button:disabled{opacity:.55;cursor:default}input{display:block;width:100%;padding:10px;border:1px solid #b8c6d6;border-radius:7px;margin-top:5px;font:inherit}form{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:14px}summary{cursor:pointer;font-weight:600}.scroll{overflow:auto}table{border-collapse:collapse;width:100%;text-align:left}th,td{padding:12px;border-bottom:1px solid #e2e8f0;vertical-align:top}th{white-space:nowrap;background:#f8fafc}td li{white-space:nowrap}#notice{white-space:pre-wrap;color:#8a3912}#result{margin-top:12px}.muted{color:#506078}
-.lease-table{margin-top:8px;font-size:13px;min-width:485px}.lease-table th,.lease-table td{padding:8px;white-space:nowrap}.lease-table td:first-child{font-family:monospace;color:#096957}.logout{display:block;margin:0}.logout button{background:#ffffff20}#empty{margin-top:12px}.capacity{display:flex;gap:16px;flex-wrap:wrap;margin:12px 0}.capacity span{background:#edf7f5;padding:8px 12px;border-radius:8px}.lease-details{margin:0}.excluded{margin:8px 0}.lease-details summary{color:#096957}.capacity progress{width:100%;accent-color:#096957}</style>
+.lease-table{margin-top:8px;font-size:13px;min-width:485px}.lease-table th,.lease-table td{padding:8px;white-space:nowrap}.lease-table td:first-child{font-family:monospace;color:#096957}.logout{display:block;margin:0}.logout button{background:#ffffff20}#empty{margin-top:12px}.capacity{display:flex;gap:16px;flex-wrap:wrap;margin:12px 0}.capacity span{background:#edf7f5;padding:8px 12px;border-radius:8px}.lease-details{margin:0}.excluded{margin:8px 0}.lease-details summary{color:#096957}.capacity progress{width:100%;accent-color:#096957}[hidden]{display:none!important}header{background:linear-gradient(115deg,#102137,#173d4c)}header h1{font-size:clamp(24px,4vw,36px)}main{max-width:1160px}.stats{flex:1;display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}.stats>div{background:#f1f7fa;border-radius:12px;padding:13px 16px}.stats strong{font-variant-numeric:tabular-nums}.vlan-link,.back{color:#096957;font-weight:700;text-decoration:none}.vlan-link:hover,.back:hover{text-decoration:underline}.vlan-link{display:inline-block;padding:4px 0}.vlan-list tbody tr:hover{background:#f4faf9}.usage{min-width:140px}.usage progress{display:block;width:100%;height:9px;margin-top:6px;accent-color:#096957}.usage small{color:#506078}.detail-title{margin-top:12px;font-size:30px}.range-list{margin:6px 0 0;padding-left:20px}.lease-table{font-size:14px}.lease-table th,.lease-table td{padding:12px}.lease-table tbody tr:nth-child(even){background:#f8fafc}.notice{padding:12px;background:#fff5e8;border-radius:8px}.notice:empty{display:none}
+</style>
 <header class="bar"><div><small>QUẢN TRỊ MẠNG / DHCPV4</small><h1>Kea DHCP Manager</h1><div>Theo dõi subnet và địa chỉ đã cấp trên cặp máy chủ HA</div></div><form class="logout" method="post" action="/logout"><button>Đăng xuất</button></form></header>
 <main>
 <section class="bar">
-<div class="stats"><div><strong id="count">—</strong>Subnet</div><div><strong id="total">—</strong>Lease đang hoạt động</div><div><strong id="health">—</strong>Nguồn dữ liệu</div></div>
-<button id="refresh">Làm mới</button>
+<div class="stats" id="overview-stats"><div><strong id="count">—</strong>Subnet</div><div><strong id="total">—</strong>Lease đang hoạt động</div><div><strong id="health">—</strong>Nguồn dữ liệu</div></div>
+<a class="back" id="back" href="/" hidden>← Dashboard</a><button id="refresh">Làm mới</button>
 </section>
-<p id="notice" role="status"></p>
+<p id="notice" class="notice" role="status"></p>
 <details class="form" id="editor">
 <summary>Lập kế hoạch DHCP cho VLAN trên trunk</summary>
 <form id="form">
@@ -29,77 +30,133 @@
 <p id="result" role="status"></p>
 <pre id="plan" class="scroll"></pre>
 </details>
+<section id="vlan-detail" hidden></section>
 <section>
-<div class="bar"><div><h2>Subnet và lease</h2><p class="muted">VLAN ID lấy từ Kea hoặc từ ánh xạ của dashboard.</p></div><label>Tìm VLAN, IP, MAC hoặc hostname<input id="filter" type="search" placeholder="Ví dụ 20 hoặc 192.168"></label></div>
-<div class="scroll"><table><thead><tr><th>VLAN và lease</th><th>Subnet</th><th>Pool IP</th><th>Node có subnet</th></tr></thead><tbody id="rows"></tbody></table></div>
-<p id="empty" class="muted"></p>
+<div class="bar"><div><h2 id="list-title">Tổng quan VLAN</h2><p id="list-description" class="muted">Chọn một VLAN để xem dải cấp phát và danh sách IP.</p></div><label id="search-label">Tìm theo VLAN, subnet hoặc thiết bị<input id="filter" type="search" placeholder="Nhập từ khóa"></label></div>
+<div class="scroll"><table id="data-table" class="vlan-list"><thead><tr id="headings"></tr></thead><tbody id="rows"></tbody></table></div>
+<p id="empty" class="muted" role="status"></p>
 </section>
 </main>
 <script>
 const el = id => document.getElementById(id);
 let rows = [];
 let partial = false;
+const selection = new URLSearchParams(location.search);
+const isDetail = location.pathname === '/vlan';
+el('back').hidden = !isDetail;
+el('overview-stats').hidden = isDetail;
+el('editor').hidden = isDetail;
+
+function matches(query, values) {
+  return values.some(value => String(value ?? '').toLowerCase().includes(query));
+}
+
+function leaseFields(lease) {
+  return [lease['ip-address'], lease.hostname, lease['hw-address']];
+}
+
+function vlanName(row) {
+  return row.vlan == null ? 'Chưa gán VLAN' : 'VLAN ' + row.vlan;
+}
+
+function textElement(tag, content, className) {
+  const element = document.createElement(tag);
+  element.textContent = content;
+  if (className) element.className = className;
+  return element;
+}
+
+function usage(row) {
+  const {used, size} = row.capacity;
+  const bar = document.createElement('div');
+  bar.className = 'usage';
+  const percent = size ? Math.round(used * 100 / size) : 0;
+  bar.append(textElement('small', size ? used + ' / ' + size + ' · ' + percent + '%' + (partial ? '*' : '') : 'Chưa có pool'));
+  if (size) {
+    const progress = document.createElement('progress');
+    progress.max = size;
+    progress.value = used;
+    progress.setAttribute('aria-label', 'IP đang cấp trong pool của ' + vlanName(row));
+    bar.append(progress);
+  }
+  return bar;
+}
+
+function detail(row) {
+  const panel = el('vlan-detail');
+  panel.replaceChildren();
+  panel.hidden = !row;
+  if (!row) return;
+  panel.append(textElement('h2', vlanName(row), 'detail-title'));
+  panel.append(textElement('p', row.cidr + ' · Subnet ID ' + row.id, 'muted'));
+  const stats = document.createElement('div');
+  stats.className = 'stats';
+  const {size, used, remaining, excluded} = row.capacity;
+  for (const [value, label] of [[row.leases.length + (partial ? '*' : ''), 'Lease đang hoạt động'],
+    [size, 'IP trong pool'], [used + (partial ? '*' : ''), 'Đang cấp trong pool'],
+    [partial ? '—' : remaining, 'Chưa có lease hoạt động']]) {
+    const card = document.createElement('div');
+    card.append(textElement('strong', value), textElement('span', label));
+    stats.append(card);
+  }
+  const capacity = document.createElement('div');
+  capacity.className = 'capacity';
+  capacity.append(usage(row));
+  panel.append(stats, capacity);
+  for (const [title, ranges] of [
+    ['Dải cấp phát động', row.pools],
+    ['Dải ngoài pool động', excluded.map(([start, end]) => start === end ? start : start + ' – ' + end)]
+  ]) {
+    const block = document.createElement('details');
+    block.className = 'excluded';
+    block.open = true;
+    block.append(textElement('summary', title + ' · ' + ranges.length + ' dải'));
+    const list = document.createElement('ul');
+    list.className = 'range-list';
+    for (const range of ranges) list.append(textElement('li', range));
+    if (ranges.length) block.append(list);
+    panel.append(block);
+  }
+}
+
 function render() {
-  const query = el('filter').value.trim();
-  const visible = rows.filter(row => [row.vlan, row.cidr, ...row.leases.flatMap(lease => [lease["ip-address"], lease.hostname, lease["hw-address"]])].some(value => String(value ?? "").toLowerCase().includes(query.toLowerCase())));
+  const query = el('filter').value.trim().toLowerCase();
+  const selected = isDetail && rows.find(row =>
+    String(row.id) === selection.get('id') && row.cidr === selection.get('subnet'));
+  const titles = isDetail ? ['Địa chỉ IP', 'Hostname', 'MAC', 'Hết hạn'] :
+    ['VLAN', 'Subnet', 'Lease hoạt động', 'Sử dụng pool', 'Chưa có lease trong pool'];
+  el('headings').replaceChildren(...titles.map(title => textElement('th', title)));
   el('rows').replaceChildren();
-  el('empty').textContent = visible.length ? '' : 'Không có subnet để hiển thị.';
-  for (const row of visible) {
-    const tr = el('rows').insertRow();
-    const cell = tr.insertCell();
-    for (const value of [row.cidr, row.pools.join(', ') || '—', row.nodes.join(', ')]) {
-      tr.insertCell().textContent = value;
-    }
-    const details = document.createElement('details');
-    details.className = 'lease-details';
-    const summary = document.createElement('summary');
-    const vlan = row.vlan == null ? 'Chưa gán VLAN' : 'VLAN ' + row.vlan;
-    summary.textContent = vlan + ' · ' + row.leases.length + (partial ? '*' : '') + ' IP đã cấp';
-    const capacity = document.createElement('div');
-    capacity.className = 'capacity';
-    const stats = row.capacity;
-    for (const label of [
-      stats.size + ' IP trong pool',
-      stats.used + ' đang cấp trong pool',
-      partial ? 'Chưa đủ dữ liệu để tính số còn lại' : stats.remaining + ' chưa có lease hoạt động'
-    ]) {
-      const badge = document.createElement('span');
-      badge.textContent = label;
-      capacity.append(badge);
-    }
-    if (stats.size) {
-      const progress = document.createElement('progress');
-      progress.max = stats.size;
-      progress.value = stats.used;
-      progress.setAttribute('aria-label', 'IP đang cấp trong pool');
-      capacity.append(progress);
-    }
-    const excluded = document.createElement('p');
-    excluded.className = 'excluded muted';
-    const ranges = stats.excluded.map(([start, end]) => start === end ? start : start + ' – ' + end);
-    excluded.textContent = 'Dải ngoài pool động · ' + (ranges.join(', ') || 'Không có');
-    const scroll = document.createElement('div');
-    scroll.className = 'scroll';
-    const table = document.createElement('table');
-    table.className = 'lease-table';
-    const heading = table.createTHead().insertRow();
-    for (const title of ['Địa chỉ IP', 'Hostname', 'MAC', 'Hết hạn']) {
-      const th = document.createElement('th');
-      th.textContent = title;
-      heading.append(th);
-    }
-    const body = table.createTBody();
-    for (const lease of row.leases) {
-      const entry = body.insertRow();
+  el('data-table').className = isDetail ? 'lease-table' : 'vlan-list';
+  el('list-title').textContent = isDetail ? 'Địa chỉ IP đã cấp' : 'Tổng quan VLAN';
+  el('list-description').textContent = isDetail ?
+    'Tìm thiết bị theo IP, hostname hoặc địa chỉ MAC.' : 'Chọn một VLAN để xem dải cấp phát và danh sách IP.';
+  if (isDetail) {
+    const leases = selected ? selected.leases.filter(lease => matches(query, leaseFields(lease))) : [];
+    for (const lease of leases) {
+      const tr = el('rows').insertRow();
       const expiry = new Date((lease.cltt + lease['valid-lft']) * 1000);
-      for (const value of [lease['ip-address'], lease.hostname, lease['hw-address'], expiry.toLocaleString('vi-VN')]) {
-        entry.insertCell().textContent = value || '—';
+      for (const value of [...leaseFields(lease), expiry.toLocaleString('vi-VN')]) {
+        tr.insertCell().textContent = value || '—';
       }
     }
-    scroll.append(table);
-    details.append(summary, capacity, excluded, scroll);
-    cell.append(details);
+    el('empty').textContent = leases.length ? '' : selected ?
+      'Không có lease phù hợp để hiển thị.' : 'Không tìm thấy subnet này trong dữ liệu hiện có.';
+    return;
   }
+  const visible = rows.filter(row => matches(query, [vlanName(row), row.cidr]) ||
+    row.leases.some(lease => matches(query, leaseFields(lease))));
+  for (const row of visible) {
+    const tr = el('rows').insertRow();
+    const link = textElement('a', vlanName(row) + ' ↗', 'vlan-link');
+    link.href = '/vlan?' + new URLSearchParams({id: row.id, subnet: row.cidr});
+    tr.insertCell().append(link);
+    tr.insertCell().textContent = row.cidr;
+    tr.insertCell().textContent = row.leases.length + (partial ? '*' : '');
+    tr.insertCell().append(usage(row));
+    tr.insertCell().textContent = partial ? '—' : row.capacity.remaining;
+  }
+  el('empty').textContent = visible.length ? '' : 'Không có subnet phù hợp để hiển thị.';
 }
 async function load() {
   el('refresh').disabled = true;
@@ -114,6 +171,7 @@ async function load() {
     el('total').textContent = data.errors.length ? data.total + '*' : data.total;
     el('health').textContent = data.errors.length ? 'Thiếu dữ liệu' : 'Đủ 2 node';
     el('notice').textContent = data.errors.length ? '* Số lease theo dữ liệu hiện có.\n' + data.errors.join('\n') : '';
+    if (isDetail) detail(rows.find(row => String(row.id) === selection.get('id') && row.cidr === selection.get('subnet')));
     render();
   } catch (error) {
     el('notice').textContent = error.message;

@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from http.cookies import CookieError, SimpleCookie
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlsplit
 from urllib.request import Request, urlopen
 
 NODES = [os.getenv("KEA_A_URL"), os.getenv("KEA_B_URL")]
@@ -325,7 +325,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.login_page()
         if not self.authorized():
             return
-        if self.path == "/":
+        if urlsplit(self.path).path in ("/", "/vlan"):
             self.reply(200, Path(__file__).with_name("index.html").read_bytes(), "text/html")
         elif self.path == "/api/dashboard":
             self.reply(200, dashboard())
