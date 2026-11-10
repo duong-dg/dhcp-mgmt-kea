@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="vi">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kea DHCP Manager</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f1f5f9;color:#14243c;font:15px system-ui,sans-serif}header{background:#12243b;color:white;padding:24px max(5vw,20px)}header small{color:#9de1d2;letter-spacing:.13em}h1{margin:5px 0}main{max-width:1200px;margin:auto;padding:25px 20px}section,details.form{background:white;border:1px solid #dce4ee;border-radius:14px;padding:20px;margin:15px 0}.bar{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}h2,p{margin:0 0 8px}.stats{display:flex;gap:30px;flex-wrap:wrap}.stats strong{font-size:28px;display:block}button{background:#096957;color:white;border:0;border-radius:8px;padding:10px 16px;font:inherit;cursor:pointer}button:disabled{opacity:.55;cursor:default}input{display:block;width:100%;padding:10px;border:1px solid #b8c6d6;border-radius:7px;margin-top:5px;font:inherit}form{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:14px}summary{cursor:pointer;font-weight:600}.scroll{overflow:auto}table{border-collapse:collapse;width:100%;text-align:left}th,td{padding:12px;border-bottom:1px solid #e2e8f0;vertical-align:top}th{white-space:nowrap;background:#f8fafc}td li{white-space:nowrap}#notice{white-space:pre-wrap;color:#8a3912}#result{margin-top:12px}.muted{color:#506078}
+</style>
+<header><small>QUẢN TRỊ MẠNG / DHCPV4</small><h1>Kea DHCP Manager</h1><div>Theo dõi subnet và địa chỉ đã cấp trên cặp máy chủ HA</div></header>
+<main>
+<section class="bar">
+<div class="stats"><div><strong id="count">—</strong>Subnet</div><div><strong id="total">—</strong>Lease đang hoạt động</div><div><strong id="health">—</strong>Nguồn dữ liệu</div></div>
+<button id="refresh">Làm mới</button>
+</section>
+<p id="notice" role="status"></p>
+<details class="form" id="editor">
+<summary>Lập kế hoạch DHCP cho VLAN trên trunk</summary>
+<form id="form">
+<label>VLAN ID<input name="vlan" type="number" min="1" max="4094" required></label>
+<label>Subnet CIDR<input name="cidr" placeholder="192.168.20.0/24" required></label>
+<label>Gateway<input name="gateway" placeholder="192.168.20.1" required></label>
+<label>IP đầu pool<input name="start" placeholder="192.168.20.50" required></label>
+<label>IP cuối pool<input name="end" placeholder="192.168.20.200" required></label>
+<label>DNS (phân tách bằng dấu phẩy)<input name="dns"></label>
+<label>IP node phụ<input name="standby" required></label>
+<label>IP node chính<input name="primary" required></label>
+<button id="save">Xem cấu hình dự kiến</button>
+</form>
+<p id="result" role="status"></p>
+<pre id="plan" class="scroll"></pre>
+</details>
+<section>
+<div class="bar"><div><h2>Subnet và lease</h2><p class="muted">VLAN ID lấy từ Kea hoặc từ ánh xạ của dashboard.</p></div><label>Tìm VLAN hoặc subnet<input id="filter" type="search" placeholder="Ví dụ 20 hoặc 192.168"></label></div>
+<div class="scroll"><table><thead><tr><th>VLAN</th><th>Subnet</th><th>Pool IP</th><th>Node có subnet</th><th>IP đã cấp</th></tr></thead><tbody id="rows"></tbody></table></div>
+<p id="empty" class="muted"></p>
+</section>
+</main>
+<script>
+const el = id => document.getElementById(id);
+let rows = [];
+function render() {
+  const query = el('filter').value.trim();
+  const visible = rows.filter(row => [row.vlan, row.cidr].some(value => String(value ?? '').includes(query)));
+  el('rows').replaceChildren();
+  el('empty').textContent = visible.length ? '' : 'Không có subnet để hiển thị.';
+  for (const row of visible) {
+    const tr = el('rows').insertRow();
+    for (const value of [row.vlan ?? 'Chưa gán', row.cidr, row.pools.join(', ') || '—', row.nodes.join(', ')]) {
+      tr.insertCell().textContent = value;
+    }
+    const cell = tr.insertCell();
+    if (!row.leases.length) {
+      cell.textContent = '0';
+      continue;
+    }
+    const details = document.createElement('details');
+    const summary = document.createElement('summary');
+    summary.textContent = row.leases.length + ' IP · Xem danh sách';
+    const list = document.createElement('ul');
+    for (const lease of row.leases) {
+      const li = document.createElement('li');
+      const expiry = new Date((lease.cltt + lease['valid-lft']) * 1000);
+      li.textContent = [lease['ip-address'], lease['hw-address'], lease.hostname, expiry.toLocaleString('vi-VN')].filter(Boolean).join(' · ');
+      list.append(li);
+    }
+    details.append(summary, list);
+    cell.append(details);
+  }
+}
+async function load() {
+  el('refresh').disabled = true;
+  try {
+    const response = await fetch('/api/dashboard');
+    if (!response.ok) throw new Error('Không thể tải dashboard.');
+    const data = await response.json();
+    rows = data.rows;
+    el('count').textContent = rows.length;
+    el('total').textContent = data.errors.length ? data.total + '*' : data.total;
+    el('health').textContent = data.errors.length ? 'Thiếu dữ liệu' : 'Đủ 2 node';
+    el('notice').textContent = data.errors.length ? '* Số lease theo dữ liệu hiện có.\n' + data.errors.join('\n') : '';
+    render();
+  } catch (error) {
+    el('notice').textContent = error.message;
+  } finally {
+    el('refresh').disabled = false;
+  }
+}
+el('refresh').onclick = load;
+el('filter').oninput = render;
+el('form').onsubmit = async event => {
+  event.preventDefault();
+  const data = Object.fromEntries(new FormData(event.target));
+  el('save').disabled = true;
+  el('plan').textContent = '';
+  try {
+    const response = await fetch('/api/vlan-plan', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error);
+    el('result').textContent = 'Cấu hình dự kiến cho hai node.';
+    el('plan').textContent = JSON.stringify(result, null, 2);
+  } catch (error) {
+    el('result').textContent = error.message;
+  } finally {
+    el('save').disabled = false;
+  }
+};
+load();
+</script>
+</html>
