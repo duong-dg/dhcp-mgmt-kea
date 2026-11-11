@@ -122,7 +122,9 @@ def reservation_candidates(original, plan):
     return candidates, plan
 
 
-def run(apply, prepare=False, reservation=None):
+def run(apply, prepare=False, reservation=None, draft=False):
+    if draft and (apply or reservation is not None):
+        raise ValueError("Chế độ xuất bản nháp không được dùng để áp dụng.")
     if not all(NODES) or NODES[0] == NODES[1]:
         raise ValueError("Cần hai URL Kea khác nhau.")
     PENDING_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -143,10 +145,13 @@ def run(apply, prepare=False, reservation=None):
                 raise ValueError(f"Node {node + 1}: thiếu lệnh kiểm tra, nạp hoặc lưu cấu hình.")
             kea(node, "config-test", {"Dhcp4": candidates[node]})
 
-        with ThreadPoolExecutor(2) as executor:
-            list(executor.map(test_candidate, range(2)))
-        print(f"Hai node đã qua config-test. Subnet {expected['subnet']}, ID {expected['id']}.", flush=True)
-        if not apply and not prepare:
+        if draft:
+            print("Bản nháp: chưa qua config-test. Cần kiểm tra file bằng Kea trên từng node trước khi nạp.", flush=True)
+        else:
+            with ThreadPoolExecutor(2) as executor:
+                list(executor.map(test_candidate, range(2)))
+            print(f"Hai node đã qua config-test. Subnet {expected['subnet']}, ID {expected['id']}.", flush=True)
+        if not apply and not prepare and not draft:
             return
         if configurations() != original or (raw is not None and pending.read_bytes() != raw):
             raise ValueError("Cấu hình hoặc file chờ vừa thay đổi. Hãy kiểm tra lại.")
@@ -155,11 +160,13 @@ def run(apply, prepare=False, reservation=None):
         for node, config in enumerate(original, 1):
             (backup / f"node-{node}.json").write_text(json.dumps({"Dhcp4": config}, indent=2), encoding="utf-8")
         print(f"Bản sao cấu hình: {backup}", flush=True)
-        if prepare:
+        if prepare or draft:
             for node, config in enumerate(candidates, 1):
                 path = backup / f"node-{node}.next.json"
                 path.write_text(json.dumps({"Dhcp4": config}, indent=2) + "\n", encoding="utf-8")
                 print(f"Node {node}: {path}", flush=True)
+            (backup / "validation.json").write_text(
+                json.dumps({"api_config_test_passed": not draft}, indent=2) + "\n", encoding="utf-8")
             return
         if reservation is not None:
             # Verify persistence of each node's current configuration before changing either node.
@@ -196,9 +203,10 @@ if __name__ == "__main__":
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--apply", action="store_true", help="Ghi vào hai node sau khi kiểm tra")
     mode.add_argument("--prepare", action="store_true", help="Xuất cấu hình đã kiểm tra, không nạp Kea")
+    mode.add_argument("--draft", action="store_true", help="Chỉ xuất bản nháp, cần kiểm tra cú pháp trên từng node")
     args = parser.parse_args()
     os.umask(0o077)
     try:
-        run(args.apply, args.prepare)
+        run(args.apply, args.prepare, draft=args.draft)
     except (ValueError, OSError, KeyError, TypeError) as error:
         raise SystemExit(f"Dừng: {error}") from error
