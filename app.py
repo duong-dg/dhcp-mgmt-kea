@@ -92,8 +92,8 @@ def mail_otp(code):
         message = EmailMessage()
         message["From"] = sender
         message["To"] = recipient
-        message["Subject"] = "Kea DHCP Manager — Mã xác nhận"
-        message.set_content(f"Mã đăng nhập Kea DHCP Manager: {code}. Mã hết hạn sau 5 phút.")
+        message["Subject"] = "GHA Network Manager — Mã xác nhận"
+        message.set_content(f"Mã đăng nhập GHA Network Manager: {code}. Mã hết hạn sau 5 phút.")
         client.send_message(message)
 TRUNK = os.getenv("KEA_TRUNK_INTERFACE", "eth0")
 EXISTING_VLANS = {
@@ -583,5 +583,5 @@ if __name__ == "__main__":
             context.load_cert_chain(TLS_CERT, TLS_KEY)
             server.socket = context.wrap_socket(server.socket, server_side=True)
         scheme = "https" if TLS_CERT else "http"
-        print(f"Kea DHCP Manager: {scheme}://{WEB_BIND}:{port}", flush=True)
+        print(f"GHA Network Manager: {scheme}://{WEB_BIND}:{port}", flush=True)
         server.serve_forever()

@@ -1,4 +1,4 @@
-# Kea DHCP Manager
+# GHA Network Manager
 
 Dashboard nội bộ cho Kea DHCPv4 HA. Web hiển thị subnet, pool, số lease còn hiệu lực và chi tiết IP, MAC, hostname, thời hạn lease. Lease trùng giữa hai node được gộp theo subnet ID và IP.
 
