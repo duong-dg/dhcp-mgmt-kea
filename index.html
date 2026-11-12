@@ -114,7 +114,14 @@ function detail(row) {
   panel.append(stats, capacity);
   const edit = textElement('button', 'Chỉnh dải DHCP và IP không cấp');
   edit.type = 'button';
-  edit.disabled = partial || row.nodes.length !== 2 || row.vlan == null || !row.pools.length;
+  const editBlock = partial ? 'Chưa đủ dữ liệu từ hai node. Xem thông báo lỗi phía trên và bấm Làm mới.' :
+    row.nodes.length !== 2 ? 'Subnet này chưa được thấy trên cả hai node Kea. Cần đối chiếu cấu hình trước khi chỉnh.' :
+    !row.pools.length ? 'Subnet chưa có pool DHCP để chỉnh.' : '';
+  edit.disabled = Boolean(editBlock);
+  if (editBlock) {
+    edit.title = editBlock;
+    panel.append(textElement('p', editBlock, 'notice'));
+  }
   edit.onclick = () => {
     editingRow = row;
     el('editor').hidden = false;
@@ -122,11 +129,11 @@ function detail(row) {
     el('editor').querySelector('summary').textContent = 'Chỉnh dải DHCP · ' + vlanName(row);
     el('form').reset();
     const fields = el('form').elements;
-    fields.vlan.value = row.vlan;
+    fields.vlan.value = row.vlan ?? '';
     fields.cidr.value = row.cidr;
     fields.gateway.value = row.gateway || '';
     fields.gateway.readOnly = Boolean(row.gateway);
-    fields.vlan.readOnly = true;
+    fields.vlan.readOnly = row.vlan != null;
     fields.cidr.readOnly = true;
     const bounds = row.pools.map(pool => {
       if (pool.includes('-')) return pool.split('-').map(value => value.trim());
