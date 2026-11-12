@@ -59,6 +59,12 @@ def build_candidates(original, plan):
 def verify_subnet(expected):
     for node, config in enumerate(configurations(), 1):
         match = next((subnet for subnet in subnets(config) if subnet["id"] == expected["id"]), {})
+        if expected.get("kind") == "update-pools":
+            if match.get("subnet") != expected["subnet"] or {
+                pool["pool"].replace(" ", "") for pool in match.get("pools", [])
+            } != {pool["pool"].replace(" ", "") for pool in expected["pools"]}:
+                raise ValueError(f"Node {node}: pool sau khi nạp không khớp.")
+            continue
         if expected.get("kind") in ("reservation", "remove-reservation"):
             present = any(
                 all(item.get(key) == value for key, value in expected["reservation"].items())
@@ -122,6 +128,23 @@ def reservation_candidates(original, plan):
     return candidates, plan
 
 
+def pool_candidates(original, plan):
+    candidates = copy.deepcopy(original)
+    for node, config in enumerate(candidates, 1):
+        subnet = next((item for item in config.get("subnet4", [])
+                       if item["id"] == plan["id"] and item["subnet"] == plan["subnet"]), None)
+        if subnet is None or (config.get("config-control") or {}).get("config-databases"):
+            raise ValueError(f"Node {node}: cần subnet độc lập lưu bằng file.")
+        pools = subnet.get("pools", [])
+        if any(set(pool) != {"pool"} for pool in pools):
+            raise ValueError(f"Node {node}: pool có tùy chọn nâng cao, cần chỉnh riêng.")
+        if sorted(pool["pool"].replace(" ", "") for pool in pools) != sorted(
+                value.replace(" ", "") for value in plan["previous_pools"]):
+            raise ValueError(f"Node {node}: pool đã thay đổi. Hãy tải lại trang và xem trước lần nữa.")
+        subnet["pools"] = plan["pools"]
+    return candidates, plan
+
+
 def run(apply, prepare=False, reservation=None, draft=False):
     if draft and (apply or reservation is not None):
         raise ValueError("Chế độ xuất bản nháp không được dùng để áp dụng.")
@@ -137,6 +160,8 @@ def run(apply, prepare=False, reservation=None, draft=False):
         original = configurations()
         if plan.get("kind") in ("reservation", "remove-reservation"):
             candidates, expected = reservation_candidates(original, plan)
+        elif plan.get("kind") == "update-pools":
+            candidates, expected = pool_candidates(original, plan)
         else:
             candidates, expected = build_candidates(original, plan)
         def test_candidate(node):

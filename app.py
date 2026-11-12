@@ -184,6 +184,8 @@ def dashboard():
                 "nodes": [], "reservations": [],
             })
             row["nodes"].append(node)
+            row.setdefault("gateway", next((option["data"] for option in subnet.get("option-data", [])
+                                            if option.get("name") == "routers"), ""))
             for reservation in subnet.get("reservations", []):
                 address = reservation.get("ip-address")
                 mac = reservation.get("hw-address", "").lower()
@@ -253,6 +255,16 @@ def vlan_plan(data, allow_gateway_in_range=False):
 
 
 def plan_preview(data):
+    if data.get("kind") == "update-pools":
+        subnet_id = int(data["id"])
+        if not 0 < subnet_id < 4294967295:
+            raise ValueError("Subnet ID không hợp lệ.")
+        generated = trunk_preview(data)["kea"]["subnet4"]
+        if (not isinstance(data["previous_pools"], list)
+                or not all(isinstance(value, str) for value in data["previous_pools"])):
+            raise ValueError("Thiếu pool hiện tại để đối chiếu.")
+        return {"kind": "update-pools", "id": subnet_id, "subnet": generated["subnet"],
+                "pools": generated["pools"], "previous_pools": data["previous_pools"]}
     if data.get("kind") in ("reservation", "remove-reservation"):
         address = ip.IPv4Address(data["ip"])
         network = ip.IPv4Network(data["subnet"])

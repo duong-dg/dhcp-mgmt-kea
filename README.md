@@ -96,3 +96,11 @@ phép config-write lưu file cấu hình chính. Web kiểm tra config-test và
 khả năng lưu cấu hình hiện tại trước khi nạp reservation mới. Nếu cổng
 quản trị chỉ đọc hoặc không ghi được file, thao tác dừng trước khi đổi
 reservation. Nút hủy yêu cầu chờ chỉ xóa kế hoạch chưa nạp.
+
+Trong trang chi tiết VLAN, nút Chỉnh dải DHCP và IP không cấp nạp pool
+hiện tại vào form. Điền lại IP hai node để bảo vệ chúng khi mở rộng pool.
+Xem trước rồi lưu kế hoạch. Đây là kế hoạch update-pools cho subnet đã có,
+giữ nguyên gateway, DNS, reservation và các thiết lập khác. Script kiểm tra
+pool nền chưa đổi trên hai node trước khi xuất hoặc áp dụng. Pool có cấu
+hình nâng cao cần chỉnh riêng để tránh làm mất các tùy chọn đang dùng.
+Giảm pool hoặc loại trừ IP không thu hồi lease hiện tại của thiết bị.

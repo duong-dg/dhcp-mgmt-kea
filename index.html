@@ -49,6 +49,7 @@ let partial = false;
 let pendingReservation = null;
 let autoReservations = false;
 let reservationBusy = null;
+let editingRow = null;
 const selection = new URLSearchParams(location.search);
 const isDetail = location.pathname === '/vlan';
 el('back').hidden = !isDetail;
@@ -111,6 +112,45 @@ function detail(row) {
   capacity.className = 'capacity';
   capacity.append(usage(row));
   panel.append(stats, capacity);
+  const edit = textElement('button', 'Chỉnh dải DHCP và IP không cấp');
+  edit.type = 'button';
+  edit.disabled = partial || row.nodes.length !== 2 || row.vlan == null || !row.pools.length;
+  edit.onclick = () => {
+    editingRow = row;
+    el('editor').hidden = false;
+    el('editor').open = true;
+    el('editor').querySelector('summary').textContent = 'Chỉnh dải DHCP · ' + vlanName(row);
+    el('form').reset();
+    const fields = el('form').elements;
+    fields.vlan.value = row.vlan;
+    fields.cidr.value = row.cidr;
+    fields.gateway.value = row.gateway || '';
+    fields.gateway.readOnly = Boolean(row.gateway);
+    fields.vlan.readOnly = true;
+    fields.cidr.readOnly = true;
+    const bounds = row.pools.map(pool => {
+      if (pool.includes('-')) return pool.split('-').map(value => value.trim());
+      const [address, prefix] = pool.split('/');
+      const start = address.split('.').reduce((value, octet) => value * 256 + Number(octet), 0);
+      const end = start + 2 ** (32 - Number(prefix)) - 1;
+      return [address, [24, 16, 8, 0].map(shift => Math.floor(end / 2 ** shift) % 256).join('.')];
+    });
+    const numeric = address => address.split('.').reduce((value, octet) => value * 256 + Number(octet), 0);
+    bounds.sort((a, b) => numeric(a[0]) - numeric(b[0]));
+    fields.start.value = bounds[0][0];
+    fields.end.value = bounds[bounds.length - 1][1];
+    fields.exclude.value = row.capacity.excluded.filter(([first, last]) =>
+      numeric(first) >= numeric(fields.start.value) && numeric(last) <= numeric(fields.end.value)
+    ).map(([first, last]) => first === last ? first : first + ' - ' + last).join('\n');
+    fields.dns.closest('label').hidden = true;
+    el('result').textContent = 'Nhập IP của hai node trên VLAN để web chừa khỏi pool. IP đang có lease vẫn có thể được thiết bị dùng tới khi hết hạn.';
+    clearDownload();
+    el('stage-vlan').hidden = true;
+    previewedPlan = null;
+    el('plan').textContent = '';
+    el('editor').scrollIntoView({behavior: 'smooth'});
+  };
+  panel.append(edit);
   for (const [title, ranges] of [
     ['Dải cấp phát động', row.pools],
     ['Dải ngoài pool động', excluded.map(([start, end]) => start === end ? start : start + ' – ' + end)]
@@ -312,6 +352,11 @@ el('stage-vlan').onclick = async () => {
 el('form').onsubmit = async event => {
   event.preventDefault();
   const data = Object.fromEntries(new FormData(event.target));
+  if (editingRow) {
+    data.kind = 'update-pools';
+    data.id = editingRow.id;
+    data.previous_pools = editingRow.pools;
+  }
   el('save').disabled = true;
   clearDownload();
   el('plan').textContent = '';
@@ -324,7 +369,7 @@ el('form').onsubmit = async event => {
     const file = new Blob([JSON.stringify(result, null, 2) + '\n'], {type: 'application/json'});
     planUrl = URL.createObjectURL(file);
     el('download-plan').href = planUrl;
-    el('download-plan').download = 'vlan-' + result.kea.subnet4['user-context']['vlan-id'] + '.json';
+    el('download-plan').download = 'vlan-' + data.vlan + '.json';
     el('download-plan').hidden = false;
     previewedPlan = data;
     el('stage-vlan').hidden = false;
