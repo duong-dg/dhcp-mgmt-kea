@@ -113,3 +113,15 @@ Cấu hình KEA_SFLOW_VLANS_URL bằng URL đầy đủ endpoint trả về
 Backend gửi X-API-Key và chỉ trả số đếm, thời điểm quan sát cho trình duyệt.
 Nếu sFlow lỗi, số liệu DHCP vẫn hiển thị và sFlow báo chưa có dữ liệu.
 observed_ips là số IP nguồn đo quan sát, phụ thuộc cửa sổ thống kê của API.
+
+Dashboard hỗ trợ thêm /rates/vlans?minutes=5 và
+/rates/ips?vlan_id=<ID>&minutes=5&limit=200 dưới cùng API sFlow.
+Có thể giữ KEA_SFLOW_VLANS_URL hiện tại, hoặc dùng KEA_SFLOW_BASE_URL
+trỏ tới đường dẫn /api/traffic. Khóa API tiếp tục cấu hình phía server.
+Địa chỉ /32 được chuẩn hóa để ghép theo IP. Bảng có cả IP sFlow quan sát
+nhưng chưa có lease, hiển thị trống hostname và MAC khi chưa biết.
+Tốc độ là trung bình 5 phút từ API, gồm Internet và nội bộ, theo bps.
+Trạng thái stale vẫn hiển thị giá trị lịch sử kèm nhãn dữ liệu cũ.
+sampling_applied=verify_collector yêu cầu đối chiếu hệ số tại collector.
+Ghép theo IP hiện tại không xác định được chủ thiết bị của toàn cửa sổ
+nếu địa chỉ đã đổi người dùng trong khoảng thời gian đó.

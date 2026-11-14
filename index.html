@@ -50,6 +50,23 @@ let pendingReservation = null;
 let autoReservations = false;
 let reservationBusy = null;
 let editingRow = null;
+let ipRates = new Map();
+
+function rateText(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
+  if (value >= 1000000000) return (value / 1000000000).toFixed(2) + ' Gbps';
+  if (value >= 1000000) return (value / 1000000).toFixed(2) + ' Mbps';
+  if (value >= 1000) return (value / 1000).toFixed(2) + ' Kbps';
+  return value.toFixed(0) + ' bps';
+}
+
+function appendRates(cell, rates) {
+  if (!rates) { cell.textContent = '—'; return; }
+  cell.append(textElement('div', '↓ ' + rateText(rates.internet_download_bps) +
+    ' · ↑ ' + rateText(rates.internet_upload_bps)));
+  cell.append(textElement('small', rates.status === 'fresh' ? 'Mẫu mới · TB 5 phút' :
+    'Dữ liệu cũ/chưa xác định · TB 5 phút', 'muted'));
+}
 const selection = new URLSearchParams(location.search);
 const isDetail = location.pathname === '/vlan';
 el('back').hidden = !isDetail;
@@ -114,12 +131,24 @@ function detail(row) {
   panel.append(stats, capacity);
   if (row.traffic) {
     const card = document.createElement('div');
-    card.append(textElement('strong', row.traffic.observed_ips), textElement('span', 'IP có lưu lượng · sFlow'));
+    card.append(textElement('strong', row.traffic.observed_ips ?? '—'), textElement('span', 'IP có lưu lượng · sFlow'));
     stats.append(card);
     const seen = new Date(row.traffic.last_seen);
     const timestamp = row.traffic.last_seen && !Number.isNaN(seen.getTime()) ?
       seen.toLocaleString('vi-VN') : 'Chưa có thời điểm quan sát';
     panel.append(textElement('p', 'sFlow quan sát cuối · ' + timestamp, 'muted'));
+    if (row.traffic.rates) {
+      const rates = row.traffic.rates;
+      const block = document.createElement('section');
+      block.append(textElement('h3', 'Lưu lượng VLAN · trung bình 5 phút'));
+      appendRates(block, rates);
+      block.append(textElement('p', 'Nội bộ · ↓ ' + rateText(rates.internal_download_bps) +
+        ' · ↑ ' + rateText(rates.internal_upload_bps), 'muted'));
+      if (rates.sampling_applied === 'verify_collector') {
+        block.append(textElement('p', 'Nguồn sFlow chưa xác nhận hệ số sampling. Số liệu tốc độ cần đối chiếu.', 'notice'));
+      }
+      panel.append(block);
+    }
   }
   const edit = textElement('button', 'Chỉnh dải DHCP và IP không cấp');
   edit.type = 'button';
@@ -187,14 +216,15 @@ function render() {
   const query = el('filter').value.trim().toLowerCase();
   const selected = isDetail && rows.find(row =>
     String(row.id) === selection.get('id') && row.cidr === selection.get('subnet'));
-  const titles = isDetail ? ['Địa chỉ IP', 'Hostname', 'MAC', 'Hết hạn', 'Giữ IP'] :
-    ['VLAN', 'Subnet', 'Lease hoạt động', 'IP có lưu lượng · sFlow', 'Sử dụng pool', 'Chưa có lease trong pool'];
+  const titles = isDetail ? ['Địa chỉ IP', 'Hostname', 'MAC', 'Hết hạn', 'Internet ↓ / ↑', 'Nội bộ ↓ / ↑', 'Quan sát cuối', 'Giữ IP'] :
+    ['VLAN', 'Subnet', 'Lease hoạt động', 'IP có lưu lượng · sFlow', 'Internet ↓ / ↑', 'Sử dụng pool', 'Chưa có lease trong pool'];
   el('headings').replaceChildren(...titles.map(title => textElement('th', title)));
   el('rows').replaceChildren();
   el('data-table').className = isDetail ? 'lease-table' : 'vlan-list';
   el('list-title').textContent = isDetail ? 'Địa chỉ IP đã cấp' : 'Tổng quan VLAN';
   el('list-description').textContent = isDetail ?
-    'Tìm thiết bị theo IP, hostname hoặc địa chỉ MAC.' : 'Chọn một VLAN để xem dải cấp phát và danh sách IP.';
+    'Tốc độ theo IP, trung bình 5 phút. Tối đa 200 IP từ API sFlow; ô — là chưa có số liệu. IP có thể được cấp cho thiết bị khác trong cửa sổ đo.' :
+    'Chọn VLAN để xem thiết bị và lưu lượng. Tốc độ Internet trung bình 5 phút; hệ số sampling cần xác nhận ở nguồn sFlow.';
   if (isDetail) {
     const devices = new Map();
     if (selected) {
@@ -208,6 +238,10 @@ function render() {
         const device = devices.get(key) || {ip: reservation.ip, mac: reservation.mac};
         device.reservation = reservation;
         devices.set(key, device);
+      }
+      const knownIps = new Set([...devices.values()].map(device => device.ip));
+      for (const ip of ipRates.keys()) {
+        if (!knownIps.has(ip)) devices.set(ip + '|sflow', {ip});
       }
       const pending = pendingReservation;
       if (pending?.id === selected.id && pending.subnet === selected.cidr) {
@@ -231,6 +265,12 @@ function render() {
       for (const value of [ip, hostname, mac, expiry?.toLocaleString('vi-VN')]) {
         tr.insertCell().textContent = value || '—';
       }
+      const rates = ipRates.get(ip);
+      appendRates(tr.insertCell(), rates);
+      tr.insertCell().textContent = rates ? '↓ ' + rateText(rates.internal_download_bps) +
+        ' · ↑ ' + rateText(rates.internal_upload_bps) : '—';
+      const seen = rates?.last_seen ? new Date(rates.last_seen) : null;
+      tr.insertCell().textContent = seen && !Number.isNaN(seen.getTime()) ? seen.toLocaleString('vi-VN') : '—';
       const actions = document.createElement('div');
       actions.className = 'reservation-actions';
       tr.insertCell().append(actions);
@@ -300,6 +340,7 @@ function render() {
     const trafficCell = tr.insertCell();
     trafficCell.textContent = row.traffic?.observed_ips ?? '—';
     if (row.traffic?.last_seen) trafficCell.title = 'Quan sát cuối: ' + row.traffic.last_seen;
+    appendRates(tr.insertCell(), row.traffic?.rates);
     tr.insertCell().append(usage(row));
     tr.insertCell().textContent = partial ? '—' : row.capacity.remaining;
   }
@@ -322,7 +363,23 @@ async function load() {
     el('notice').textContent = data.errors.length ? '* Số lease theo dữ liệu hiện có.\n' + data.errors.join('\n') : '';
     if (data.traffic_error) el('notice').textContent += '\n' + data.traffic_error;
     if (isDetail) detail(rows.find(row => String(row.id) === selection.get('id') && row.cidr === selection.get('subnet')));
+    ipRates = new Map();
     render();
+    if (isDetail) {
+      const selected = rows.find(row => String(row.id) === selection.get('id') && row.cidr === selection.get('subnet'));
+      if (selected?.vlan != null) {
+        try {
+          const ratesResponse = await fetch('/api/traffic/ips?vlan_id=' + encodeURIComponent(selected.vlan), {cache: 'no-store'});
+          if (ratesResponse.status === 401) { location.assign('/login'); return; }
+          if (!ratesResponse.ok) throw new Error('Chưa tải được băng thông từng IP.');
+          const ratesData = await ratesResponse.json();
+          ipRates = new Map(ratesData.items.map(item => [item.ip, item]));
+          render();
+        } catch (error) {
+          el('notice').textContent += '\n' + error.message;
+        }
+      }
+    }
   } catch (error) {
     el('notice').textContent = error.message;
   } finally {

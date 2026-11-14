@@ -4,6 +4,7 @@ import hmac
 import json
 import os
 import re
+import math
 import secrets
 import ssl
 import smtplib
@@ -168,17 +169,59 @@ def pool_summary(row):
     return {"size": size, "used": used, "remaining": size - used, "excluded": excluded}
 
 
+def traffic_api(path):
+    configured = os.getenv("KEA_SFLOW_BASE_URL")
+    legacy = os.getenv("KEA_SFLOW_VLANS_URL", "")
+    base = configured or legacy.removesuffix("/vlans")
+    if not base:
+        raise ValueError("Chưa cấu hình API sFlow.")
+    key = os.getenv("KEA_SFLOW_API_KEY", "")
+    if not key:
+        raise ValueError("Chưa cấu hình khóa API sFlow.")
+    request = Request(base.rstrip("/") + path, headers={"X-API-Key": key})
+    with urlopen(request, timeout=4) as response:
+        return json.load(response)
+
+
+def traffic_rate(item):
+    if item.get("unit") != "bps":
+        raise ValueError("Đơn vị sFlow không được hỗ trợ.")
+    result = {key: item.get(key) for key in
+              ("status", "last_seen", "window_seconds", "updated_at", "sampling_applied")}
+    for scope in ("internet", "internal"):
+        for direction in ("download", "upload"):
+            name = f"{scope}_{direction}_bps"
+            value = item[name]
+            if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+                raise ValueError("Tốc độ sFlow không hợp lệ.")
+            result[name] = value
+    return result
+
+
+def read_ip_traffic(vlan):
+    data = traffic_api(f"/rates/ips?vlan_id={vlan}&minutes=5&limit=200")
+    if int(data["vlan_id"]) != vlan:
+        raise ValueError("VLAN sFlow không khớp.")
+    items = []
+    for item in data["items"]:
+        if int(item["vlan_id"]) != vlan:
+            raise ValueError("VLAN sFlow không khớp.")
+        address = ip.IPv4Interface(item["ip"])
+        if address.network.prefixlen != 32:
+            raise ValueError("Địa chỉ sFlow cần là IP hoặc /32.")
+        items.append({"ip": str(address.ip), **traffic_rate(item)})
+    return {"items": items, "minutes": 5, "limit": 200, "status": data.get("status")}
+
+
 def read_traffic():
     url = os.getenv("KEA_SFLOW_VLANS_URL")
-    if not url:
+    if not url and not os.getenv("KEA_SFLOW_BASE_URL"):
         return {}, None
     key = os.getenv("KEA_SFLOW_API_KEY", "")
     if not key:
         return {}, "sFlow chưa có khóa API."
     try:
-        request = Request(url, headers={"X-API-Key": key})
-        with urlopen(request, timeout=4) as response:
-            data = json.load(response)
+        data = traffic_api("/vlans")
         traffic = {}
         for item in data["vlans"]:
             vlan = int(item["vlan_id"])
@@ -189,9 +232,18 @@ def read_traffic():
             if seen is not None and not isinstance(seen, str):
                 raise ValueError("Invalid timestamp")
             traffic[vlan] = {"observed_ips": count, "last_seen": seen}
-        return traffic, None
     except (OSError, ValueError, KeyError, TypeError):
         return {}, "Không đọc được thống kê sFlow. Kiểm tra URL, khóa API và kết nối."
+    try:
+        data = traffic_api("/rates/vlans?minutes=5")
+        for item in data["items"]:
+            vlan = int(item["vlan_id"])
+            if not 1 <= vlan <= 4094:
+                raise ValueError("VLAN không hợp lệ.")
+            traffic.setdefault(vlan, {}).update(rates=traffic_rate(item))
+        return traffic, None
+    except (OSError, ValueError, KeyError, TypeError):
+        return traffic, "Chưa đọc được tốc độ sFlow theo VLAN."
 
 
 def dashboard():
@@ -546,6 +598,14 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(200, Path(__file__).with_name("index.html").read_bytes(), "text/html")
         elif self.path == "/api/dashboard":
             self.reply(200, dashboard())
+        elif urlsplit(self.path).path == "/api/traffic/ips":
+            try:
+                vlan = int(parse_qs(urlsplit(self.path).query)["vlan_id"][0])
+                if not 1 <= vlan <= 4094:
+                    raise ValueError("VLAN không hợp lệ.")
+                self.reply(200, read_ip_traffic(vlan))
+            except (ValueError, KeyError, TypeError, OSError):
+                self.reply(502, {"error": "Không đọc được tốc độ sFlow theo IP."})
         else:
             self.reply(404, {"error": "Không tìm thấy."})
 
