@@ -112,6 +112,15 @@ function detail(row) {
   capacity.className = 'capacity';
   capacity.append(usage(row));
   panel.append(stats, capacity);
+  if (row.traffic) {
+    const card = document.createElement('div');
+    card.append(textElement('strong', row.traffic.observed_ips), textElement('span', 'IP có lưu lượng · sFlow'));
+    stats.append(card);
+    const seen = new Date(row.traffic.last_seen);
+    const timestamp = row.traffic.last_seen && !Number.isNaN(seen.getTime()) ?
+      seen.toLocaleString('vi-VN') : 'Chưa có thời điểm quan sát';
+    panel.append(textElement('p', 'sFlow quan sát cuối · ' + timestamp, 'muted'));
+  }
   const edit = textElement('button', 'Chỉnh dải DHCP và IP không cấp');
   edit.type = 'button';
   const editBlock = partial ? 'Chưa đủ dữ liệu từ hai node. Xem thông báo lỗi phía trên và bấm Làm mới.' :
@@ -179,7 +188,7 @@ function render() {
   const selected = isDetail && rows.find(row =>
     String(row.id) === selection.get('id') && row.cidr === selection.get('subnet'));
   const titles = isDetail ? ['Địa chỉ IP', 'Hostname', 'MAC', 'Hết hạn', 'Giữ IP'] :
-    ['VLAN', 'Subnet', 'Lease hoạt động', 'Sử dụng pool', 'Chưa có lease trong pool'];
+    ['VLAN', 'Subnet', 'Lease hoạt động', 'IP có lưu lượng · sFlow', 'Sử dụng pool', 'Chưa có lease trong pool'];
   el('headings').replaceChildren(...titles.map(title => textElement('th', title)));
   el('rows').replaceChildren();
   el('data-table').className = isDetail ? 'lease-table' : 'vlan-list';
@@ -288,6 +297,9 @@ function render() {
     tr.insertCell().append(link);
     tr.insertCell().textContent = row.cidr;
     tr.insertCell().textContent = row.leases.length + (partial ? '*' : '');
+    const trafficCell = tr.insertCell();
+    trafficCell.textContent = row.traffic?.observed_ips ?? '—';
+    if (row.traffic?.last_seen) trafficCell.title = 'Quan sát cuối: ' + row.traffic.last_seen;
     tr.insertCell().append(usage(row));
     tr.insertCell().textContent = partial ? '—' : row.capacity.remaining;
   }
@@ -308,6 +320,7 @@ async function load() {
     el('total').textContent = data.errors.length ? data.total + '*' : data.total;
     el('health').textContent = data.errors.length ? 'Thiếu dữ liệu' : 'Đủ 2 node';
     el('notice').textContent = data.errors.length ? '* Số lease theo dữ liệu hiện có.\n' + data.errors.join('\n') : '';
+    if (data.traffic_error) el('notice').textContent += '\n' + data.traffic_error;
     if (isDetail) detail(rows.find(row => String(row.id) === selection.get('id') && row.cidr === selection.get('subnet')));
     render();
   } catch (error) {

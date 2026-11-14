@@ -104,3 +104,12 @@ giữ nguyên gateway, DNS, reservation và các thiết lập khác. Script ki�
 pool nền chưa đổi trên hai node trước khi xuất hoặc áp dụng. Pool có cấu
 hình nâng cao cần chỉnh riêng để tránh làm mất các tùy chọn đang dùng.
 Giảm pool hoặc loại trừ IP không thu hồi lease hiện tại của thiết bị.
+
+## Thống kê sFlow theo VLAN
+
+Cấu hình KEA_SFLOW_VLANS_URL bằng URL đầy đủ endpoint trả về
+{"vlans":[{"vlan_id":20,"observed_ips":18,"last_seen":"2026-01-01T12:00:00+07:00"}]}.
+Đặt KEA_SFLOW_API_KEY trong EnvironmentFile riêng của máy chủ (quyền 600).
+Backend gửi X-API-Key và chỉ trả số đếm, thời điểm quan sát cho trình duyệt.
+Nếu sFlow lỗi, số liệu DHCP vẫn hiển thị và sFlow báo chưa có dữ liệu.
+observed_ips là số IP nguồn đo quan sát, phụ thuộc cửa sổ thống kê của API.

@@ -168,9 +168,37 @@ def pool_summary(row):
     return {"size": size, "used": used, "remaining": size - used, "excluded": excluded}
 
 
+def read_traffic():
+    url = os.getenv("KEA_SFLOW_VLANS_URL")
+    if not url:
+        return {}, None
+    key = os.getenv("KEA_SFLOW_API_KEY", "")
+    if not key:
+        return {}, "sFlow chưa có khóa API."
+    try:
+        request = Request(url, headers={"X-API-Key": key})
+        with urlopen(request, timeout=4) as response:
+            data = json.load(response)
+        traffic = {}
+        for item in data["vlans"]:
+            vlan = int(item["vlan_id"])
+            count = item["observed_ips"]
+            if not 1 <= vlan <= 4094 or type(count) is not int or count < 0:
+                raise ValueError("Invalid traffic data")
+            seen = item.get("last_seen")
+            if seen is not None and not isinstance(seen, str):
+                raise ValueError("Invalid timestamp")
+            traffic[vlan] = {"observed_ips": count, "last_seen": seen}
+        return traffic, None
+    except (OSError, ValueError, KeyError, TypeError):
+        return {}, "Không đọc được thống kê sFlow. Kiểm tra URL, khóa API và kết nối."
+
+
 def dashboard():
-    with ThreadPoolExecutor(2) as executor:
+    with ThreadPoolExecutor(3) as executor:
+        traffic_request = executor.submit(read_traffic)
         nodes = list(executor.map(read_node, range(2)))
+        traffic, traffic_error = traffic_request.result()
     rows = {}
     leases = {}
     now = time.time()
@@ -209,6 +237,7 @@ def dashboard():
         ]
         row["leases"].sort(key=lambda lease: ip.IPv4Address(lease["ip-address"]))
         row["capacity"] = pool_summary(row)
+        row["traffic"] = traffic.get(row["vlan"])
     pending = None
     try:
         draft = json.loads(PENDING_FILE.read_text(encoding="utf-8"))
@@ -218,6 +247,7 @@ def dashboard():
         pass
     return {"rows": list(rows.values()), "errors": [e for _, _, errors in nodes for e in errors],
             "pending_reservation": pending,
+            "traffic_error": traffic_error,
             "auto_reservations": AUTO_RESERVATIONS,
             "writes": WRITES, "total": len(leases)}
 
