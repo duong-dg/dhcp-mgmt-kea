@@ -23,7 +23,7 @@
 <header class="bar"><div><small>QUẢN TRỊ MẠNG / DHCPV4</small><h1>GHA Network Manager</h1><div>Theo dõi subnet và địa chỉ đã cấp trên cặp máy chủ HA</div></div><form class="logout" method="post" action="/logout"><button>Đăng xuất</button></form></header>
 <main>
 <section class="bar">
-<div class="stats" id="overview-stats"><div><strong id="count">—</strong>Subnet</div><div><strong id="total">—</strong>Lease đang hoạt động</div><div><strong id="health">—</strong>Nguồn dữ liệu</div></div>
+<div class="stats" id="overview-stats"><div><strong id="count">—</strong>Subnet</div><div><strong id="total">—</strong>Lease đang hoạt động</div><div><strong id="health">—</strong>Cặp Kea HA</div></div>
 <a class="back" id="back" href="/" hidden>← Dashboard</a><label>Cửa sổ sFlow<select id="traffic-minutes"><option value="1" selected>1 phút</option><option value="5">5 phút</option><option value="15">15 phút</option></select></label><button id="refresh">Làm mới</button>
 </section>
 <p id="notice" class="notice" role="status"></p>
@@ -406,7 +406,7 @@ async function load() {
     partial = Boolean(data.errors.length);
     el('count').textContent = rows.length;
     el('total').textContent = data.errors.length ? data.total + '*' : data.total;
-    el('health').textContent = data.errors.length ? 'Thiếu dữ liệu' : 'Đủ 2 node';
+    el('health').textContent = data.errors.length ? 'Thiếu dữ liệu' : 'Đủ dữ liệu';
     el('notice').textContent = data.errors.length ? '* Số lease theo dữ liệu hiện có.\n' + data.errors.join('\n') : '';
     if (data.traffic_error) el('notice').textContent += '\n' + data.traffic_error;
     if (isDetail) detail(rows.find(row => String(row.id) === selection.get('id') && row.cidr === selection.get('subnet')));
