@@ -198,8 +198,15 @@ def traffic_rate(item):
     return result
 
 
-def read_ip_traffic(vlan):
-    data = traffic_api(f"/rates/ips?vlan_id={vlan}&minutes=5&limit=200")
+def traffic_minutes(path):
+    value = int(parse_qs(urlsplit(path).query).get("minutes", ["5"])[0])
+    if value not in (1, 5, 15):
+        raise ValueError("Chỉ hỗ trợ cửa sổ 1, 5 hoặc 15 phút.")
+    return value
+
+
+def read_ip_traffic(vlan, minutes=5):
+    data = traffic_api(f"/rates/ips?vlan_id={vlan}&minutes={minutes}&limit=200")
     if int(data["vlan_id"]) != vlan:
         raise ValueError("VLAN sFlow không khớp.")
     items = []
@@ -210,10 +217,10 @@ def read_ip_traffic(vlan):
         if address.network.prefixlen != 32:
             raise ValueError("Địa chỉ sFlow cần là IP hoặc /32.")
         items.append({"ip": str(address.ip), **traffic_rate(item)})
-    return {"items": items, "minutes": 5, "limit": 200, "status": data.get("status")}
+    return {"items": items, "minutes": minutes, "limit": 200, "status": data.get("status")}
 
 
-def read_traffic():
+def read_traffic(minutes=5):
     url = os.getenv("KEA_SFLOW_VLANS_URL")
     if not url and not os.getenv("KEA_SFLOW_BASE_URL"):
         return {}, None
@@ -235,7 +242,7 @@ def read_traffic():
     except (OSError, ValueError, KeyError, TypeError):
         return {}, "Không đọc được thống kê sFlow. Kiểm tra URL, khóa API và kết nối."
     try:
-        data = traffic_api("/rates/vlans?minutes=5")
+        data = traffic_api(f"/rates/vlans?minutes={minutes}")
         for item in data["items"]:
             vlan = int(item["vlan_id"])
             if not 1 <= vlan <= 4094:
@@ -246,9 +253,9 @@ def read_traffic():
         return traffic, "Chưa đọc được tốc độ sFlow theo VLAN."
 
 
-def dashboard():
+def dashboard(minutes=5):
     with ThreadPoolExecutor(3) as executor:
-        traffic_request = executor.submit(read_traffic)
+        traffic_request = executor.submit(read_traffic, minutes)
         nodes = list(executor.map(read_node, range(2)))
         traffic, traffic_error = traffic_request.result()
     rows = {}
@@ -596,14 +603,17 @@ class Handler(BaseHTTPRequestHandler):
             return
         if urlsplit(self.path).path in ("/", "/vlan"):
             self.reply(200, Path(__file__).with_name("index.html").read_bytes(), "text/html")
-        elif self.path == "/api/dashboard":
-            self.reply(200, dashboard())
+        elif urlsplit(self.path).path == "/api/dashboard":
+            try:
+                self.reply(200, dashboard(traffic_minutes(self.path)))
+            except ValueError:
+                self.reply(400, {"error": "Cửa sổ sFlow không hợp lệ."})
         elif urlsplit(self.path).path == "/api/traffic/ips":
             try:
                 vlan = int(parse_qs(urlsplit(self.path).query)["vlan_id"][0])
                 if not 1 <= vlan <= 4094:
                     raise ValueError("VLAN không hợp lệ.")
-                self.reply(200, read_ip_traffic(vlan))
+                self.reply(200, read_ip_traffic(vlan, traffic_minutes(self.path)))
             except (ValueError, KeyError, TypeError, OSError):
                 self.reply(502, {"error": "Không đọc được tốc độ sFlow theo IP."})
         else:

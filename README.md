@@ -125,3 +125,9 @@ Trạng thái stale vẫn hiển thị giá trị lịch sử kèm nhãn dữ li
 sampling_applied=verify_collector yêu cầu đối chiếu hệ số tại collector.
 Ghép theo IP hiện tại không xác định được chủ thiết bị của toàn cửa sổ
 nếu địa chỉ đã đổi người dùng trong khoảng thời gian đó.
+
+Trên dashboard, chọn Cửa sổ sFlow là 1, 5 hoặc 15 phút.
+Lựa chọn mặc định 1 phút và được nhớ trong trình duyệt.
+Web truyền minutes vào cả API tốc độ VLAN và API từng IP.
+Đây là khoảng lấy trung bình tốc độ; bấm Làm mới để tải số liệu mới.
+URL và khóa API tiếp tục nằm trong cấu hình môi trường trên server.
