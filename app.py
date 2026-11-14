@@ -7,6 +7,7 @@ import re
 import math
 import secrets
 import ssl
+import socket
 import smtplib
 import tempfile
 from email.message import EmailMessage
@@ -470,6 +471,28 @@ def create(data):
 
 
 class Handler(BaseHTTPRequestHandler):
+    def setup(self):
+        context = getattr(self.server, "tls_context", None)
+        self.plain_http = False
+        if context is not None:
+            self.request.settimeout(10)
+            if self.request.recv(1, socket.MSG_PEEK) == b"\x16":
+                self.request = context.wrap_socket(self.request, server_side=True)
+            else:
+                self.plain_http = True
+        super().setup()
+
+    def parse_request(self):
+        if not super().parse_request():
+            return False
+        if self.plain_http:
+            path = self.path if self.path.startswith("/") else "/"
+            origin = (WEB_ORIGIN or f"https://{WEB_BIND}:{self.server.server_port}").rstrip("/")
+            self.reply(302, b"", headers=[("Location", origin + path), ("Connection", "close")])
+            self.close_connection = True
+            return False
+        return True
+
     def web_origin(self):
         scheme = "https" if TLS_CERT else "http"
         return WEB_ORIGIN or f"{scheme}://{self.headers.get('Host')}"
@@ -700,7 +723,7 @@ if __name__ == "__main__":
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             context.minimum_version = ssl.TLSVersion.TLSv1_2
             context.load_cert_chain(TLS_CERT, TLS_KEY)
-            server.socket = context.wrap_socket(server.socket, server_side=True)
+            server.tls_context = context
         if redirect_port:
             redirect = stack.enter_context(HTTPServer((WEB_BIND, redirect_port), HTTPSRedirectHandler))
             redirect.https_origin = (WEB_ORIGIN or f"https://{WEB_BIND}:{port}").rstrip("/")

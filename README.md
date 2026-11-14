@@ -140,3 +140,8 @@ Khi backend dùng chứng thư HTTPS trực tiếp, đặt KEA_HTTP_REDIRECT_POR
 cổng dưới 1024 qua systemd AmbientCapabilities=CAP_NET_BIND_SERVICE.
 Kiểm tra cổng HTTP còn trống trước khi bật. Có thể dùng cổng trên 1024
 để thử mà không cần capability. Cổng redirect phải khác cổng HTTPS.
+
+Khi TLS trực tiếp được bật, cổng web cũng nhận HTTP và trả chuyển hướng
+sang HTTPS trên cùng cổng. Ví dụ http://<IP>:8080/login chuyển tới
+https://<IP>:8080/login. HTTP chỉ trả chuyển hướng, không xử lý đăng nhập.
+Listener cổng 80 là tùy chọn riêng cho địa chỉ không ghi cổng.
