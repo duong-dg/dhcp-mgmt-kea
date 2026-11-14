@@ -634,7 +634,13 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply(200, dashboard(traffic_minutes(self.path)))
             except ValueError:
                 self.reply(400, {"error": "Cửa sổ sFlow không hợp lệ."})
-        elif urlsplit(self.path).path == "/api/traffic/ips":
+        elif urlsplit(self.path).path == "/api/traffic/rates/vlans":
+            try:
+                traffic, error = read_traffic(traffic_minutes(self.path))
+                self.reply(200, {"vlans": traffic, "error": error})
+            except ValueError:
+                self.reply(400, {"error": "Cửa sổ sFlow không hợp lệ."})
+        elif urlsplit(self.path).path in ("/api/traffic/ips", "/api/traffic/rates/ips"):
             try:
                 vlan = int(parse_qs(urlsplit(self.path).query)["vlan_id"][0])
                 if not 1 <= vlan <= 4094:

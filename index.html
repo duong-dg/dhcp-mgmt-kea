@@ -27,6 +27,7 @@
 <a class="back" id="back" href="/" hidden>← Dashboard</a><label>Cửa sổ sFlow<select id="traffic-minutes"><option value="1" selected>1 phút</option><option value="5">5 phút</option><option value="15">15 phút</option></select></label><button id="refresh">Làm mới</button>
 </section>
 <p id="notice" class="notice" role="status"></p>
+<p id="traffic-status" class="muted" role="status">Băng thông tự cập nhật mỗi 60 giây khi trang đang mở.</p>
 <details class="form" id="editor">
 <summary>Lập kế hoạch DHCP cho VLAN trên trunk</summary>
 <form id="form">
@@ -86,6 +87,9 @@ try {
   if ([1, 5, 15].includes(saved)) el('traffic-minutes').value = String(saved);
 } catch {}
 let ipRates = new Map();
+let dashboardLoading = false;
+let trafficRefreshing = false;
+let trafficVersion = 0;
 
 function rateText(value) {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
@@ -384,6 +388,9 @@ function render() {
   el('empty').textContent = visible.length ? '' : 'Không có subnet phù hợp để hiển thị.';
 }
 async function load() {
+  if (dashboardLoading) return;
+  dashboardLoading = true;
+  trafficVersion++;
   el('refresh').disabled = true;
   el('traffic-minutes').disabled = true;
   const requestedMinutes = Number(el('traffic-minutes').value);
@@ -427,10 +434,47 @@ async function load() {
   } catch (error) {
     el('notice').textContent = error.message;
   } finally {
+    dashboardLoading = false;
     el('refresh').disabled = false;
     el('traffic-minutes').disabled = false;
   }
 }
+async function refreshTraffic() {
+  if (document.hidden || dashboardLoading || trafficRefreshing || reservationBusy !== null || !rows.length) return;
+  trafficRefreshing = true;
+  const version = trafficVersion;
+  const minutes = sflowMinutes;
+  try {
+    const response = await fetch('/api/traffic/rates/vlans?minutes=' + minutes, {cache: 'no-store'});
+    if (response.status === 401) { location.assign('/login'); return; }
+    if (!response.ok) throw new Error('Không tải được thống kê sFlow theo VLAN.');
+    const data = await response.json();
+    const selected = isDetail && rows.find(row => String(row.id) === selection.get('id') && row.cidr === selection.get('subnet'));
+    let deviceRates = null;
+    if (selected?.vlan != null) {
+      const ipResponse = await fetch('/api/traffic/rates/ips?vlan_id=' +
+        encodeURIComponent(selected.vlan) + '&minutes=' + minutes, {cache: 'no-store'});
+      if (ipResponse.status === 401) { location.assign('/login'); return; }
+      deviceRates = await ipResponse.json();
+      if (!ipResponse.ok) throw new Error(deviceRates.error || 'Không tải được tốc độ theo IP.');
+    }
+    if (version !== trafficVersion || reservationBusy !== null) return;
+    for (const row of rows) row.traffic = data.vlans[String(row.vlan)] || null;
+    if (deviceRates) ipRates = new Map(deviceRates.items.map(item => [item.ip, item]));
+    if (selected) detail(selected);
+    render();
+    el('traffic-status').textContent = data.error || (deviceRates && !deviceRates.items.length ?
+      'Chưa có mẫu IP trong cửa sổ ' + minutes + ' phút. Tự thử lại sau 60 giây.' :
+      'Băng thông cập nhật lúc ' + new Date().toLocaleTimeString('vi-VN') + ' · Tự tải lại mỗi 60 giây.');
+  } catch (error) {
+    if (version === trafficVersion) {
+      el('traffic-status').textContent = error.message + ' Số liệu đang hiển thị là lần tải trước. Tự thử lại sau 60 giây.';
+    }
+  } finally {
+    trafficRefreshing = false;
+  }
+}
+setInterval(refreshTraffic, 60000);
 el('refresh').onclick = load;
 el('traffic-minutes').onchange = () => {
   try { localStorage.setItem('gha-sflow-minutes', el('traffic-minutes').value); } catch {}

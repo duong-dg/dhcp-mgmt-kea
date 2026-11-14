@@ -145,3 +145,8 @@ Khi TLS trực tiếp được bật, cổng web cũng nhận HTTP và trả chu
 sang HTTPS trên cùng cổng. Ví dụ http://<IP>:8080/login chuyển tới
 https://<IP>:8080/login. HTTP chỉ trả chuyển hướng, không xử lý đăng nhập.
 Listener cổng 80 là tùy chọn riêng cho địa chỉ không ghi cổng.
+
+Bảng băng thông tự gọi API mỗi 60 giây khi trang đang hiển thị.
+Trang VLAN dùng VLAN đang mở và cửa sổ 1/5/15 phút đang chọn.
+Lần tự cập nhật chỉ đọc sFlow, không đọc lại cấu hình Kea.
+Khi yêu cầu lỗi, web giữ số liệu lần trước và hiển thị thông báo.
