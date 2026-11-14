@@ -15,6 +15,10 @@
 .lease-table th:nth-child(2),.lease-table td:nth-child(2){left:var(--ip-width);width:var(--hostname-width);min-width:var(--hostname-width);max-width:var(--hostname-width);overflow:hidden;text-overflow:ellipsis;box-shadow:3px 0 4px -3px #14243c66}
 .lease-table tbody tr:nth-child(even) td:nth-child(-n+2){background:#f8fafc}
 @media(max-width:600px){.lease-table{--hostname-width:128px}}
+.table-navigation{position:sticky;top:0;z-index:5;background:#fff;padding:8px 0}
+.table-navigation small{display:block;color:#506078;margin-bottom:4px}
+#horizontal-scroll{overflow-x:auto;overflow-y:hidden;height:20px}
+#horizontal-spacer{height:1px}
 </style>
 <header class="bar"><div><small>QUẢN TRỊ MẠNG / DHCPV4</small><h1>GHA Network Manager</h1><div>Theo dõi subnet và địa chỉ đã cấp trên cặp máy chủ HA</div></div><form class="logout" method="post" action="/logout"><button>Đăng xuất</button></form></header>
 <main>
@@ -46,13 +50,30 @@
 <section>
 <div class="bar"><div><h2 id="list-title">Tổng quan VLAN</h2><p id="list-description" class="muted">Chọn một VLAN để xem dải cấp phát và danh sách IP.</p></div><label id="search-label">Tìm theo VLAN, subnet hoặc thiết bị<input id="filter" type="search" placeholder="Nhập từ khóa"></label></div>
 <p id="reservation-status" class="muted" role="status"></p>
-<div class="scroll"><table id="data-table" class="vlan-list"><thead><tr id="headings"></tr></thead><tbody id="rows"></tbody></table></div>
+<div id="table-navigation" class="table-navigation" hidden><small>Kéo ngang để xem thêm cột</small><div id="horizontal-scroll" tabindex="0" role="region" aria-label="Kéo ngang bảng thiết bị"><div id="horizontal-spacer"></div></div></div>
+<div id="table-scroll" class="scroll"><table id="data-table" class="vlan-list"><thead><tr id="headings"></tr></thead><tbody id="rows"></tbody></table></div>
 <p id="empty" class="muted" role="status"></p>
 
 </section>
 </main>
 <script>
 const el = id => document.getElementById(id);
+const tableScroll = el('table-scroll');
+const horizontalScroll = el('horizontal-scroll');
+horizontalScroll.onscroll = () => {
+  if (tableScroll.scrollLeft !== horizontalScroll.scrollLeft) tableScroll.scrollLeft = horizontalScroll.scrollLeft;
+};
+tableScroll.onscroll = () => {
+  if (horizontalScroll.scrollLeft !== tableScroll.scrollLeft) horizontalScroll.scrollLeft = tableScroll.scrollLeft;
+};
+function syncHorizontalScroll() {
+  el('horizontal-spacer').style.width = tableScroll.scrollWidth + 'px';
+  el('table-navigation').hidden = tableScroll.scrollWidth <= tableScroll.clientWidth;
+  horizontalScroll.scrollLeft = tableScroll.scrollLeft;
+}
+const tableSizeObserver = new ResizeObserver(syncHorizontalScroll);
+tableSizeObserver.observe(el('data-table'));
+tableSizeObserver.observe(tableScroll);
 let rows = [];
 let partial = false;
 let pendingReservation = null;
@@ -390,9 +411,13 @@ async function load() {
         try {
           const ratesResponse = await fetch('/api/traffic/ips?vlan_id=' + encodeURIComponent(selected.vlan) + '&minutes=' + requestedMinutes, {cache: 'no-store'});
           if (ratesResponse.status === 401) { location.assign('/login'); return; }
-          if (!ratesResponse.ok) throw new Error('Chưa tải được băng thông từng IP.');
           const ratesData = await ratesResponse.json();
+          if (!ratesResponse.ok) throw new Error(ratesData.error || 'Chưa tải được băng thông từng IP.');
           ipRates = new Map(ratesData.items.map(item => [item.ip, item]));
+          if (!ratesData.items.length) {
+            el('notice').textContent += '\nAPI sFlow chưa trả IP nào trong cửa sổ ' + requestedMinutes +
+              ' phút. Thử 5 phút hoặc làm mới sau khi nguồn đo cập nhật. Trạng thái nguồn: ' + (ratesData.status || 'không có');
+          }
           render();
         } catch (error) {
           el('notice').textContent += '\n' + error.message;

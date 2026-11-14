@@ -20,6 +20,7 @@ from pathlib import Path
 from http.cookies import CookieError, SimpleCookie
 from urllib.parse import parse_qs, urlsplit
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 
 NODES = [os.getenv("KEA_A_URL"), os.getenv("KEA_B_URL")]
 WRITES = os.getenv("KEA_ENABLE_WRITES") == "1"
@@ -639,6 +640,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not 1 <= vlan <= 4094:
                     raise ValueError("VLAN không hợp lệ.")
                 self.reply(200, read_ip_traffic(vlan, traffic_minutes(self.path)))
+            except HTTPError as error:
+                self.reply(502, {"error": f"API sFlow trả HTTP {error.code} khi đọc tốc độ từng IP."})
             except (ValueError, KeyError, TypeError, OSError):
                 self.reply(502, {"error": "Không đọc được tốc độ sFlow theo IP."})
         else:
