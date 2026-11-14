@@ -131,3 +131,12 @@ Lựa chọn mặc định 1 phút và được nhớ trong trình duyệt.
 Web truyền minutes vào cả API tốc độ VLAN và API từng IP.
 Đây là khoảng lấy trung bình tốc độ; bấm Làm mới để tải số liệu mới.
 URL và khóa API tiếp tục nằm trong cấu hình môi trường trên server.
+
+## Chuyển HTTP sang HTTPS
+
+Khi backend dùng chứng thư HTTPS trực tiếp, đặt KEA_HTTP_REDIRECT_PORT=80
+để chạy thêm listener HTTP chỉ chuyển GET/HEAD tới URL HTTPS cố định.
+Đường dẫn và truy vấn được giữ nguyên. Tài khoản service cần quyền bind
+cổng dưới 1024 qua systemd AmbientCapabilities=CAP_NET_BIND_SERVICE.
+Kiểm tra cổng HTTP còn trống trước khi bật. Có thể dùng cổng trên 1024
+để thử mà không cần capability. Cổng redirect phải khác cổng HTTPS.

@@ -12,6 +12,8 @@ import tempfile
 from email.message import EmailMessage
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
+from threading import Thread
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from http.cookies import CookieError, SimpleCookie
@@ -667,21 +669,43 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(500, {"error": "Không lưu được thay đổi trên máy chủ."})
 
 
+class HTTPSRedirectHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        path = self.path if self.path.startswith("/") else "/"
+        target = self.server.https_origin + path
+        self.send_response(302)
+        self.send_header("Location", target)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    do_HEAD = do_GET
+
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8080"))
+    redirect_port = int(os.getenv("KEA_HTTP_REDIRECT_PORT", "0"))
     if not WEB_PASSWORD.strip():
         raise SystemExit("Cần đặt KEA_WEB_PASSWORD để khởi động dashboard.")
     if WEB_ORIGIN and not WEB_ORIGIN.startswith("https://"):
         raise SystemExit("Truy cập qua proxy yêu cầu HTTPS.")
     if bool(TLS_CERT) != bool(TLS_KEY):
         raise SystemExit("HTTPS yêu cầu cả KEA_TLS_CERT và KEA_TLS_KEY.")
+    if redirect_port and (not TLS_CERT or not 1 <= redirect_port <= 65535 or redirect_port == port):
+        raise SystemExit("Cổng chuyển hướng phải khác cổng HTTPS và yêu cầu HTTPS trực tiếp.")
     SESSION_KEY = load_session_key()
-    with HTTPServer((WEB_BIND, port), Handler) as server:
+    with ExitStack() as stack:
+        server = stack.enter_context(HTTPServer((WEB_BIND, port), Handler))
         if TLS_CERT:
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             context.minimum_version = ssl.TLSVersion.TLSv1_2
             context.load_cert_chain(TLS_CERT, TLS_KEY)
             server.socket = context.wrap_socket(server.socket, server_side=True)
+        if redirect_port:
+            redirect = stack.enter_context(HTTPServer((WEB_BIND, redirect_port), HTTPSRedirectHandler))
+            redirect.https_origin = (WEB_ORIGIN or f"https://{WEB_BIND}:{port}").rstrip("/")
+            Thread(target=redirect.serve_forever, daemon=True).start()
+            print(f"HTTP :{redirect_port} chuyển hướng sang {redirect.https_origin}", flush=True)
         scheme = "https" if TLS_CERT else "http"
         print(f"GHA Network Manager: {scheme}://{WEB_BIND}:{port}", flush=True)
         server.serve_forever()
