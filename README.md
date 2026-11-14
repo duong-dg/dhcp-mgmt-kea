@@ -155,3 +155,9 @@ Cả ba cửa sổ 1/5/15 phút dùng endpoint /rates/ips và /rates/vlans.
 API nguồn đã sửa cách lọc bucket cho cửa sổ 1 phút. Dashboard giữ các
 trường Internet và nội bộ theo schema rates, chuẩn hóa IP có hoặc không
 có /32. Không cần triển khai endpoint latest.
+
+Trang VLAN có biểu đồ Top 10 IP theo băng thông Internet, xếp theo tổng
+tốc độ, tải xuống hoặc tải lên. Hai thanh màu cùng thang đo hiển thị tốc
+độ từng hướng. Biểu đồ dùng cửa sổ đang chọn và cập nhật cùng sFlow mỗi
+60 giây. IP có mẫu cũ được ghi chú. Chọn IP trên biểu đồ để lọc bảng.
+Xếp hạng dựa trên tối đa 200 IP nguồn API trả về, không tính nội bộ.

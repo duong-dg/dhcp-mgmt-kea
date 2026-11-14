@@ -19,6 +19,22 @@
 .table-navigation small{display:block;color:#506078;margin-bottom:4px}
 #horizontal-scroll{overflow-x:auto;overflow-y:hidden;height:20px}
 #horizontal-spacer{height:1px}
+.traffic-chart{background:linear-gradient(140deg,#fff,#f1f8f8);border:1px solid #d7e8e3}
+.chart-legend{display:flex;gap:18px;font-size:13px;color:#506078;margin:16px 0}
+.chart-dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;background:#087e70}
+.chart-dot.upload{background:#4673d8}
+.chart-list{list-style:none;padding:0;margin:16px 0}
+.chart-entry{display:grid;grid-template-columns:190px minmax(80px,1fr) 110px;gap:16px;align-items:center;padding:13px 0;border-bottom:1px solid #e2ece9}
+.chart-entry:last-child{border-bottom:0}
+.chart-label{min-width:0}.chart-label small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#506078}
+.chart-label button{background:transparent;color:#096957;padding:0;font-family:monospace;font-size:14px;font-weight:700;text-align:left}
+.chart-track{height:9px;background:#e4eeeb;border-radius:6px;margin:5px 0;overflow:hidden}
+.chart-fill{height:100%;background:#087e70;border-radius:6px;transition:width .4s ease}
+.chart-fill.upload{background:#4673d8}
+.chart-value{text-align:right;font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.chart-value span{display:block;margin:3px 0}
+@media(max-width:600px){.chart-entry{grid-template-columns:130px minmax(30px,1fr) 88px;gap:8px}.chart-label button{font-size:12px}.chart-value{font-size:11px}}
+@media(prefers-reduced-motion:reduce){.chart-fill{transition:none}}
 </style>
 <header class="bar"><div><small>QUẢN TRỊ MẠNG / DHCPV4</small><h1>GHA Network Manager</h1><div>Theo dõi subnet và địa chỉ đã cấp trên cặp máy chủ HA</div></div><form class="logout" method="post" action="/logout"><button>Đăng xuất</button></form></header>
 <main>
@@ -48,6 +64,14 @@
 <button id="stage-vlan" type="button" hidden>Lưu kế hoạch chờ áp dụng</button>
 </details>
 <section id="vlan-detail" hidden></section>
+<section id="traffic-chart" class="traffic-chart" hidden>
+<div class="bar"><div><h2>Top IP · Băng thông Internet</h2><p id="chart-description" class="muted"></p></div>
+<label>Xếp hạng theo<select id="chart-sort"><option value="total">Tổng tải xuống + tải lên</option><option value="download">Tải xuống</option><option value="upload">Tải lên</option></select></label></div>
+<div class="chart-legend"><span><i class="chart-dot" aria-hidden="true"></i>Tải xuống</span><span><i class="chart-dot upload" aria-hidden="true"></i>Tải lên</span></div>
+<ol id="chart-list" class="chart-list" aria-label="Top IP dùng băng thông Internet"></ol>
+<p id="chart-empty" class="muted" role="status"></p>
+<p id="chart-note" class="muted"></p>
+</section>
 <section>
 <div class="bar"><div><h2 id="list-title">Tổng quan VLAN</h2><p id="list-description" class="muted">Chọn một VLAN để xem dải cấp phát và danh sách IP.</p></div><label id="search-label">Tìm theo VLAN, subnet hoặc thiết bị<input id="filter" type="search" placeholder="Nhập từ khóa"></label></div>
 <p id="reservation-status" class="muted" role="status"></p>
@@ -97,6 +121,63 @@ function rateText(value) {
   if (value >= 1000000) return (value / 1000000).toFixed(2) + ' Mbps';
   if (value >= 1000) return (value / 1000).toFixed(2) + ' Kbps';
   return value.toFixed(0) + ' bps';
+}
+
+function rankedTraffic(items, metric) {
+  const score = item => metric === 'download' ? item.internet_download_bps :
+    metric === 'upload' ? item.internet_upload_bps : item.internet_download_bps + item.internet_upload_bps;
+  return items.filter(item => Number.isFinite(score(item)) && score(item) > 0)
+    .sort((a, b) => score(b) - score(a) || a.ip.localeCompare(b.ip)).slice(0, 10);
+}
+
+function renderTrafficChart() {
+  el('traffic-chart').hidden = !isDetail;
+  if (!isDetail) return;
+  const row = rows.find(item => String(item.id) === selection.get('id') && item.cidr === selection.get('subnet'));
+  const items = rankedTraffic([...ipRates.values()], el('chart-sort').value);
+  el('chart-description').textContent = (row ? vlanName(row) + ' · ' : '') +
+    'Trung bình ' + sflowMinutes + ' phút · Chọn IP để tìm trong bảng bên dưới';
+  el('chart-list').replaceChildren();
+  el('chart-empty').textContent = items.length ? '' : 'Chưa có mẫu lưu lượng phù hợp để xếp hạng.';
+  const scale = Math.max(1, ...items.flatMap(item => [item.internet_download_bps, item.internet_upload_bps]));
+  items.forEach((item, index) => {
+    const entry = document.createElement('li');
+    entry.className = 'chart-entry';
+    const label = document.createElement('div');
+    label.className = 'chart-label';
+    const button = textElement('button', (index + 1) + '. ' + item.ip);
+    button.type = 'button';
+    button.onclick = () => {
+      el('filter').value = item.ip;
+      render();
+      el('search-label').scrollIntoView({behavior: 'smooth', block: 'center'});
+    };
+    const lease = row?.leases.find(lease => lease['ip-address'] === item.ip);
+    const name = textElement('small', lease?.hostname || 'Chưa có hostname trong lease');
+    name.title = name.textContent;
+    label.append(button, name);
+    if (item.status !== 'fresh') label.append(textElement('small', 'Mẫu cũ / chưa xác định'));
+    const bars = document.createElement('div');
+    bars.setAttribute('aria-hidden', 'true');
+    const values = document.createElement('div');
+    values.className = 'chart-value';
+    for (const [direction, symbol] of [['download', '↓'], ['upload', '↑']]) {
+      const rate = item['internet_' + direction + '_bps'];
+      const track = document.createElement('div');
+      track.className = 'chart-track';
+      const fill = document.createElement('div');
+      fill.className = 'chart-fill ' + direction;
+      fill.style.width = Math.max(0, Math.min(100, rate / scale * 100)) + '%';
+      track.append(fill);
+      bars.append(track);
+      values.append(textElement('span', symbol + ' ' + rateText(rate)));
+    }
+    entry.append(label, bars, values);
+    el('chart-list').append(entry);
+  });
+  const samplingUnknown = items.some(item => item.sampling_applied === 'verify_collector');
+  el('chart-note').textContent = 'Top 10 trong tối đa 200 IP API trả về; không bao gồm lưu lượng nội bộ.' +
+    (samplingUnknown ? ' Nguồn đo chưa xác nhận hệ số sampling.' : '');
 }
 
 function appendRates(cell, rates) {
@@ -255,6 +336,7 @@ function detail(row) {
 }
 
 function render() {
+  renderTrafficChart();
   const query = el('filter').value.trim().toLowerCase();
   const selected = isDetail && rows.find(row =>
     String(row.id) === selection.get('id') && row.cidr === selection.get('subnet'));
@@ -487,6 +569,7 @@ el('traffic-minutes').onchange = () => {
   load();
 };
 el('filter').oninput = render;
+el('chart-sort').onchange = renderTrafficChart;
 let previewedPlan;
 let planUrl;
 function clearDownload() {
