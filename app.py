@@ -209,7 +209,36 @@ def traffic_minutes(path):
     return value
 
 
+def read_latest_ip_traffic(vlan):
+    data = traffic_api(f"/latest?vlan_id={vlan}")
+    if int(data["vlan_id"]) != vlan or data["unit"] != "bps" or data["interval_seconds"] != 60:
+        raise ValueError("Định dạng bucket sFlow không khớp.")
+    items = []
+    for item in data["items"]:
+        address = ip.IPv4Interface(item["ip"])
+        if address.network.prefixlen != 32:
+            raise ValueError("Địa chỉ sFlow không hợp lệ.")
+        rates = {}
+        for field in ("download_bps", "upload_bps"):
+            value = item[field]
+            if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+                raise ValueError("Tốc độ sFlow không hợp lệ.")
+            rates[field] = value
+        items.append({
+            "ip": str(address.ip), **rates,
+            "status": item.get("status", data.get("status")),
+            "last_seen": item.get("last_seen"),
+            "bucket_start": data.get("bucket_start"),
+            "sampling_applied": data.get("sampling_applied"),
+            "source": "latest",
+        })
+    return {"items": items, "minutes": 1, "status": data.get("status"), "source": "latest",
+            "bucket_start": data.get("bucket_start")}
+
+
 def read_ip_traffic(vlan, minutes=5):
+    if minutes == 1:
+        return read_latest_ip_traffic(vlan)
     data = traffic_api(f"/rates/ips?vlan_id={vlan}&minutes={minutes}&limit=200")
     if int(data["vlan_id"]) != vlan:
         raise ValueError("VLAN sFlow không khớp.")
@@ -647,7 +676,9 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("VLAN không hợp lệ.")
                 self.reply(200, read_ip_traffic(vlan, traffic_minutes(self.path)))
             except HTTPError as error:
-                self.reply(502, {"error": f"API sFlow trả HTTP {error.code} khi đọc tốc độ từng IP."})
+                message = ("API sFlow chưa có endpoint /latest. Chọn 5 phút hoặc triển khai endpoint mới."
+                           if error.code == 404 else f"API sFlow trả HTTP {error.code} khi đọc tốc độ từng IP.")
+                self.reply(502, {"error": message})
             except (ValueError, KeyError, TypeError, OSError):
                 self.reply(502, {"error": "Không đọc được tốc độ sFlow theo IP."})
         else:

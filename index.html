@@ -101,10 +101,15 @@ function rateText(value) {
 
 function appendRates(cell, rates) {
   if (!rates) { cell.textContent = '—'; return; }
-  cell.append(textElement('div', '↓ ' + rateText(rates.internet_download_bps) +
-    ' · ↑ ' + rateText(rates.internet_upload_bps)));
-  cell.append(textElement('small', rates.status === 'fresh' ? 'Mẫu mới · TB ' + sflowMinutes + ' phút' :
-    'Dữ liệu cũ/chưa xác định · TB ' + sflowMinutes + ' phút', 'muted'));
+  const latest = rates.source === 'latest';
+  cell.append(textElement('div', '↓ ' + rateText(latest ? rates.download_bps : rates.internet_download_bps) +
+    ' · ↑ ' + rateText(latest ? rates.upload_bps : rates.internet_upload_bps)));
+  const window = latest ? 'Bucket hoàn chỉnh 60 giây · Tổng lưu lượng' : 'Internet · TB ' + sflowMinutes + ' phút';
+  cell.append(textElement('small', (rates.status === 'fresh' ? 'Mẫu mới · ' : 'Dữ liệu cũ/chưa xác định · ') +
+    window, 'muted'));
+  if (latest && rates.sampling_applied === 'verify_collector') {
+    cell.append(textElement('small', ' · Chưa xác nhận sampling', 'muted'));
+  }
 }
 const selection = new URLSearchParams(location.search);
 const isDetail = location.pathname === '/vlan';
@@ -255,14 +260,16 @@ function render() {
   const query = el('filter').value.trim().toLowerCase();
   const selected = isDetail && rows.find(row =>
     String(row.id) === selection.get('id') && row.cidr === selection.get('subnet'));
-  const titles = isDetail ? ['Địa chỉ IP', 'Hostname', 'MAC', 'Hết hạn', 'Internet ↓ / ↑', 'Nội bộ ↓ / ↑', 'Quan sát cuối', 'Giữ IP'] :
+  const titles = isDetail ? ['Địa chỉ IP', 'Hostname', 'MAC', 'Hết hạn', 'Lưu lượng ↓ / ↑', 'Nội bộ ↓ / ↑', 'Quan sát / bucket', 'Giữ IP'] :
     ['VLAN', 'Subnet', 'Lease hoạt động', 'IP có lưu lượng · sFlow', 'Internet ↓ / ↑', 'Sử dụng pool', 'Chưa có lease trong pool'];
   el('headings').replaceChildren(...titles.map(title => textElement('th', title)));
   el('rows').replaceChildren();
   el('data-table').className = isDetail ? 'lease-table' : 'vlan-list';
   el('list-title').textContent = isDetail ? 'Địa chỉ IP đã cấp' : 'Tổng quan VLAN';
   el('list-description').textContent = isDetail ?
-    'Tốc độ theo IP, trung bình ' + sflowMinutes + ' phút. Tối đa 200 IP từ API sFlow; ô — là chưa có số liệu. IP có thể được cấp cho thiết bị khác trong cửa sổ đo.' :
+    (sflowMinutes === 1 ? 'Theo IP từ bucket hoàn chỉnh mới nhất (60 giây). Endpoint latest trả tổng lưu lượng, chưa tách Internet và nội bộ.' :
+      'Tốc độ theo IP, trung bình ' + sflowMinutes + ' phút. Tối đa 200 IP từ API sFlow.') +
+      ' Ô — là chưa có số liệu. IP có thể được cấp cho thiết bị khác trong cửa sổ đo.' :
     'Chọn VLAN để xem thiết bị và lưu lượng. Tốc độ Internet trung bình ' + sflowMinutes + ' phút; hệ số sampling cần xác nhận ở nguồn sFlow.';
   if (isDetail) {
     const devices = new Map();
@@ -310,8 +317,10 @@ function render() {
       appendRates(tr.insertCell(), rates);
       tr.insertCell().textContent = rates ? '↓ ' + rateText(rates.internal_download_bps) +
         ' · ↑ ' + rateText(rates.internal_upload_bps) : '—';
-      const seen = rates?.last_seen ? new Date(rates.last_seen) : null;
-      tr.insertCell().textContent = seen && !Number.isNaN(seen.getTime()) ? seen.toLocaleString('vi-VN') : '—';
+      const timestamp = rates?.last_seen || rates?.bucket_start;
+      const seen = timestamp ? new Date(timestamp) : null;
+      tr.insertCell().textContent = seen && !Number.isNaN(seen.getTime()) ?
+        (rates.last_seen ? '' : 'Bucket · ') + seen.toLocaleString('vi-VN') : '—';
       const actions = document.createElement('div');
       actions.className = 'reservation-actions';
       tr.insertCell().append(actions);

@@ -150,3 +150,11 @@ Bảng băng thông tự gọi API mỗi 60 giây khi trang đang hiển thị.
 Trang VLAN dùng VLAN đang mở và cửa sổ 1/5/15 phút đang chọn.
 Lần tự cập nhật chỉ đọc sFlow, không đọc lại cấu hình Kea.
 Khi yêu cầu lỗi, web giữ số liệu lần trước và hiển thị thông báo.
+
+Cửa sổ 1 phút của trang IP dùng /latest?vlan_id=<ID>, chọn bucket hoàn
+chỉnh 60 giây gần nhất từ collector. Cần triển khai endpoint trên dịch vụ
+sFlow trước. HTTP 404 được hiển thị rõ, có thể chọn 5/15 phút để dùng
+/rates/ips. Schema latest gồm vlan_id, interval_seconds=60, unit=bps,
+bucket_start, status, sampling_applied và items với ip/download_bps/upload_bps.
+Các trường tốc độ latest được hiển thị theo tổng API, không tự suy ra
+Internet hoặc nội bộ. Tổng VLAN vẫn lấy từ /rates/vlans của nguồn sFlow.
