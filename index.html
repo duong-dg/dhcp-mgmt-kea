@@ -175,9 +175,7 @@ function renderTrafficChart() {
     entry.append(label, bars, values);
     el('chart-list').append(entry);
   });
-  const samplingUnknown = items.some(item => item.sampling_applied === 'verify_collector');
-  el('chart-note').textContent = 'Top 10 trong tối đa 200 IP API trả về; không bao gồm lưu lượng nội bộ.' +
-    (samplingUnknown ? ' Nguồn đo chưa xác nhận hệ số sampling.' : '');
+  el('chart-note').textContent = 'Top 10 trong tối đa 200 IP API trả về; không bao gồm lưu lượng nội bộ.';
 }
 
 function appendRates(cell, rates) {
@@ -186,9 +184,6 @@ function appendRates(cell, rates) {
     ' · ↑ ' + rateText(rates.internet_upload_bps)));
   cell.append(textElement('small', (rates.status === 'fresh' ? 'Mẫu mới · ' : 'Dữ liệu cũ/chưa xác định · ') +
     'Internet · TB ' + sflowMinutes + ' phút', 'muted'));
-  if (rates.sampling_applied === 'verify_collector') {
-    cell.append(textElement('small', ' · Chưa xác nhận sampling', 'muted'));
-  }
 }
 const selection = new URLSearchParams(location.search);
 const isDetail = location.pathname === '/vlan';
@@ -267,9 +262,6 @@ function detail(row) {
       appendRates(block, rates);
       block.append(textElement('p', 'Nội bộ · ↓ ' + rateText(rates.internal_download_bps) +
         ' · ↑ ' + rateText(rates.internal_upload_bps), 'muted'));
-      if (rates.sampling_applied === 'verify_collector') {
-        block.append(textElement('p', 'Nguồn sFlow chưa xác nhận hệ số sampling. Số liệu tốc độ cần đối chiếu.', 'notice'));
-      }
       panel.append(block);
     }
   }
@@ -349,7 +341,7 @@ function render() {
   el('list-description').textContent = isDetail ?
     'Tốc độ theo IP, trung bình ' + sflowMinutes + ' phút. Tối đa 200 IP từ API sFlow.' +
       ' Ô — là chưa có số liệu. IP có thể được cấp cho thiết bị khác trong cửa sổ đo.' :
-    'Chọn VLAN để xem thiết bị và lưu lượng. Tốc độ Internet trung bình ' + sflowMinutes + ' phút; hệ số sampling cần xác nhận ở nguồn sFlow.';
+    'Chọn VLAN để xem thiết bị và lưu lượng. Tốc độ Internet trung bình ' + sflowMinutes + ' phút.';
   if (isDetail) {
     const devices = new Map();
     if (selected) {
