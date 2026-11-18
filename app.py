@@ -10,6 +10,7 @@ import ssl
 import socket
 import smtplib
 import tempfile
+from datetime import datetime
 from email.message import EmailMessage
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -185,6 +186,46 @@ def traffic_api(path):
     request = Request(base.rstrip("/") + path, headers={"X-API-Key": key})
     with urlopen(request, timeout=4) as response:
         return json.load(response)
+
+
+def history_amounts(item):
+    values = {}
+    for name in ("download_bytes", "upload_bytes", "internal_download_bytes", "internal_upload_bytes"):
+        value = item.get(name)
+        if value is None:
+            value = 0
+        if type(value) is not int or value < 0:
+            raise ValueError("Dung lượng lịch sử không hợp lệ.")
+        values[name] = value
+    return values
+
+
+def read_traffic_history(vlan=None):
+    suffix = f"&vlan_id={vlan}" if vlan is not None else ""
+    with ThreadPoolExecutor(2) as executor:
+        history_request = executor.submit(traffic_api, "/history?minutes=1440" + suffix)
+        top_request = executor.submit(traffic_api, "/top-ips?minutes=1440&limit=10" + suffix)
+        history = history_request.result()
+        top = top_request.result()
+    points = []
+    for item in history["points"]:
+        timestamp = datetime.fromisoformat(item["bucket_start"].replace("Z", "+00:00"))
+        interval = item["interval_seconds"]
+        if timestamp.tzinfo is None or type(interval) is not int or interval <= 0:
+            raise ValueError("Khoảng lịch sử không hợp lệ.")
+        amounts = history_amounts(item)
+        points.append({"time": timestamp.timestamp(), "interval_seconds": interval,
+                       "download_bps": amounts["download_bytes"] * 8 / interval,
+                       "upload_bps": amounts["upload_bytes"] * 8 / interval})
+    devices = []
+    for item in top["items"]:
+        address = ip.IPv4Interface(item["ip"])
+        item_vlan = int(item["vlan_id"])
+        if address.network.prefixlen != 32 or not 1 <= item_vlan <= 4094 or (vlan is not None and vlan != item_vlan):
+            raise ValueError("IP hoặc VLAN lịch sử không hợp lệ.")
+        devices.append({"ip": str(address.ip), "vlan": item_vlan, **history_amounts(item)})
+    points.sort(key=lambda point: point["time"])
+    return {"points": points, "top": devices, "hours": 24}
 
 
 def traffic_rate(item):
@@ -641,6 +682,18 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply(200, {"vlans": traffic, "error": error})
             except ValueError:
                 self.reply(400, {"error": "Cửa sổ sFlow không hợp lệ."})
+        elif urlsplit(self.path).path == "/api/traffic/history":
+            try:
+                query = parse_qs(urlsplit(self.path).query)
+                vlan = int(query["vlan_id"][0]) if "vlan_id" in query else None
+                if vlan is not None and not 1 <= vlan <= 4094:
+                    raise ValueError("VLAN không hợp lệ.")
+            except ValueError:
+                return self.reply(400, {"error": "VLAN không hợp lệ."})
+            try:
+                self.reply(200, read_traffic_history(vlan))
+            except (OSError, KeyError, TypeError, ValueError):
+                self.reply(503, {"error": "Chưa đọc được lịch sử sFlow. Kiểm tra endpoint history và top-ips."})
         elif urlsplit(self.path).path in ("/api/traffic/ips", "/api/traffic/rates/ips"):
             try:
                 vlan = int(parse_qs(urlsplit(self.path).query)["vlan_id"][0])

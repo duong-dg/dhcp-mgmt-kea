@@ -170,3 +170,20 @@ giữ cookie của đúng địa chỉ HTTPS để sử dụng lại phiên.
 Dashboard có ba thẻ tốc độ Internet tải xuống, tải lên và nội bộ. Tổng
 chỉ cộng các VLAN có số liệu và loại trùng VLAN khi có nhiều subnet.
 Biểu đồ VLAN trên trang tổng quan cho phép mở trang thiết bị tương ứng.
+
+## Lịch sử 24 giờ và Top 10 theo dung lượng
+
+Dashboard đọc trực tiếp /history?minutes=1440 và
+/top-ips?minutes=1440&limit=10 từ API sFlow. Trang VLAN thêm vlan_id,
+trang tổng quan lấy tất cả VLAN. URL và X-API-Key dùng cấu hình sFlow
+hiện tại. Không cần tạo thêm bộ thu hoặc database trên dashboard.
+
+history trả points với bucket_start (ISO có múi giờ), interval_seconds,
+download_bytes, upload_bytes, internal_download_bytes, internal_upload_bytes.
+Đồ thị Internet đổi byte sang bps theo interval_seconds và gom trung bình
+có trọng số 5 phút, giữ khoảng trống khi thiếu mẫu.
+
+top-ips trả items với vlan_id, ip và bốn trường dung lượng trên. Top 10
+lịch sử dùng tổng Internet cộng nội bộ theo thứ tự API. Top IP tốc độ
+hiện tại tiếp tục dùng cửa sổ 1/5/15 phút. Lịch sử cố định 24 giờ,
+tự tải lại mỗi 60 giây cùng bảng khi trang đang mở.

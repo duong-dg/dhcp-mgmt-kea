@@ -47,6 +47,14 @@
 .vlan-bandwidth-item:last-child{border:0}.vlan-bandwidth-item a{color:#096957;font-weight:700;text-decoration:none}
 .vlan-bandwidth-item .chart-value{font-size:13px}
 @media(max-width:650px){.bandwidth-kpis{grid-template-columns:1fr}.bandwidth-card strong{font-size:32px}.vlan-bandwidth-item{grid-template-columns:75px 1fr;gap:10px}.vlan-bandwidth-item .chart-value{grid-column:2;text-align:left}.bandwidth-panel{padding:18px}}
+.history-layout{display:grid;grid-template-columns:minmax(0,1fr);gap:18px}
+.history-graph{width:100%;min-width:620px;display:block}
+.history-graph text{font:12px system-ui;fill:#506078}
+.history-graph .grid{stroke:#e1eae9;stroke-dasharray:3 4}
+.history-graph .download{stroke:#087e70;fill:none;stroke-width:2}
+.history-graph .upload{stroke:#4673d8;fill:none;stroke-width:2}
+.history-top .chart-entry{grid-template-columns:190px minmax(50px,1fr) 130px}
+@media(max-width:600px){.history-top .chart-entry{grid-template-columns:120px minmax(30px,1fr) 100px}}
 </style>
 <header class="bar"><div><small>QUẢN TRỊ MẠNG / DHCPV4</small><h1>GHA Network Manager</h1><div>Theo dõi subnet và địa chỉ đã cấp trên cặp máy chủ HA</div></div><form class="logout" method="post" action="/logout"><button>Đăng xuất</button></form></header>
 <main>
@@ -61,6 +69,16 @@
 <div id="bandwidth-kpis" class="bandwidth-kpis"></div>
 <div id="vlan-bandwidth"></div>
 <p id="bandwidth-note" class="muted"></p>
+</section>
+<section class="bandwidth-panel" id="history-panel">
+<h2>Lịch sử băng thông · 24 giờ</h2>
+<p id="history-description" class="muted">Đang tải dữ liệu lịch sử từ sFlow…</p>
+<div class="chart-legend"><span><i class="chart-dot" aria-hidden="true"></i>Internet tải xuống</span><span><i class="chart-dot upload" aria-hidden="true"></i>Internet tải lên</span></div>
+<div id="history-graph" class="scroll"></div>
+<p id="history-status" class="muted" role="status"></p>
+<h3>Top 10 IP · Dung lượng 24 giờ</h3>
+<p class="muted">Tổng Internet và nội bộ, theo dữ liệu đã lưu ở sFlow. Tên thiết bị được ghép từ lease hiện tại.</p>
+<ol id="history-top" class="chart-list history-top" aria-label="Top 10 IP theo dung lượng 24 giờ"></ol>
 </section>
 <details class="form" id="editor">
 <summary>Lập kế hoạch DHCP cho VLAN trên trunk</summary>
@@ -132,6 +150,136 @@ let ipRates = new Map();
 let dashboardLoading = false;
 let trafficRefreshing = false;
 let trafficVersion = 0;
+let historyData = null;
+
+function bytesText(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
+  if (value >= 1e12) return (value / 1e12).toFixed(2) + ' TB';
+  if (value >= 1e9) return (value / 1e9).toFixed(2) + ' GB';
+  if (value >= 1e6) return (value / 1e6).toFixed(2) + ' MB';
+  if (value >= 1e3) return (value / 1e3).toFixed(2) + ' KB';
+  return value.toFixed(0) + ' B';
+}
+
+function historySeries(points) {
+  const groups = new Map();
+  for (const point of points) {
+    const period = Math.floor(point.time / 300) * 300;
+    const group = groups.get(period) || {time: period, seconds: 0, download: 0, upload: 0};
+    group.seconds += point.interval_seconds;
+    group.download += point.download_bps * point.interval_seconds;
+    group.upload += point.upload_bps * point.interval_seconds;
+    groups.set(period, group);
+  }
+  return [...groups.values()].sort((a, b) => a.time - b.time).map(group => ({
+    time: group.time, download_bps: group.download / group.seconds, upload_bps: group.upload / group.seconds
+  }));
+}
+
+function renderHistory() {
+  const graph = el('history-graph');
+  const list = el('history-top');
+  graph.replaceChildren();
+  list.replaceChildren();
+  if (!historyData) return;
+  const points = historySeries(historyData.points);
+  const selected = isDetail && rows.find(row => String(row.id) === selection.get('id') && row.cidr === selection.get('subnet'));
+  el('history-description').textContent = (selected ? vlanName(selected) : 'Các VLAN sFlow có dữ liệu') +
+    ' · 24 giờ gần nhất · Biểu đồ gom trung bình 5 phút';
+  el('history-status').textContent = points.length ?
+    'Nguồn có ' + historyData.points.length + ' mốc dữ liệu. Khoảng trống trên đường biểu diễn là thiếu mẫu.' :
+    'Nguồn chưa trả dữ liệu lịch sử trong 24 giờ gần nhất.';
+  if (points.length) {
+    const end = Date.now() / 1000;
+    const start = end - 86400;
+    const width = 900, height = 260, left = 85, right = 20, top = 15, bottom = 40;
+    const scale = Math.max(1, ...points.flatMap(point => [point.download_bps, point.upload_bps]));
+    const x = time => left + (time - start) / 86400 * (width - left - right);
+    const y = rate => top + (1 - rate / scale) * (height - top - bottom);
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
+    svg.setAttribute('class', 'history-graph');
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', 'Biểu đồ băng thông Internet tải xuống và tải lên trong 24 giờ');
+    const node = (tag, attributes, text) => {
+      const item = document.createElementNS(svg.namespaceURI, tag);
+      for (const [key, value] of Object.entries(attributes)) item.setAttribute(key, value);
+      if (text != null) item.textContent = text;
+      svg.append(item);
+      return item;
+    };
+    for (let index = 0; index <= 4; index++) {
+      const rate = scale * index / 4;
+      node('line', {x1: left, x2: width - right, y1: y(rate), y2: y(rate), class: 'grid'});
+      node('text', {x: left - 8, y: y(rate) + 4, 'text-anchor': 'end'}, rateText(rate));
+      const time = start + index * 21600;
+      node('text', {x: x(time), y: height - 10, 'text-anchor': index === 0 ? 'start' : index === 4 ? 'end' : 'middle'},
+        new Date(time * 1000).toLocaleTimeString('vi-VN', {hour: '2-digit', minute: '2-digit'}));
+    }
+    for (const direction of ['download', 'upload']) {
+      let path = '', previous = null;
+      for (const point of points) {
+        if (point.time < start || point.time > end) continue;
+        const command = previous == null || point.time - previous > 600 ? 'M' : 'L';
+        path += command + x(point.time).toFixed(2) + ',' + y(point[direction + '_bps']).toFixed(2) + ' ';
+        previous = point.time;
+        const dot = node('circle', {cx: x(point.time), cy: y(point[direction + '_bps']), r: 2,
+          fill: direction === 'download' ? '#087e70' : '#4673d8'});
+        const title = document.createElementNS(svg.namespaceURI, 'title');
+        title.textContent = new Date(point.time * 1000).toLocaleString('vi-VN') + ' · ' + rateText(point[direction + '_bps']);
+        dot.append(title);
+      }
+      node('path', {d: path, class: direction});
+    }
+    graph.append(svg);
+  }
+  const items = historyData.top;
+  const total = item => item.download_bytes + item.upload_bytes + item.internal_download_bytes + item.internal_upload_bytes;
+  const max = Math.max(1, ...items.map(total));
+  items.forEach((item, index) => {
+    const entry = document.createElement('li');
+    entry.className = 'chart-entry';
+    const label = document.createElement('div');
+    label.className = 'chart-label';
+    label.append(textElement('strong', (index + 1) + '. ' + item.ip));
+    const row = rows.find(row => row.vlan === item.vlan);
+    const lease = row?.leases.find(lease => lease['ip-address'] === item.ip);
+    label.append(textElement('small', 'VLAN ' + item.vlan + ' · ' + (lease?.hostname || 'Chưa có hostname')));
+    const track = document.createElement('div');
+    track.className = 'chart-track';
+    const fill = document.createElement('div');
+    fill.className = 'chart-fill';
+    fill.style.width = total(item) / max * 100 + '%';
+    track.append(fill);
+    const value = document.createElement('div');
+    value.className = 'chart-value';
+    value.append(textElement('strong', bytesText(total(item))),
+      textElement('span', '↓ ' + bytesText(item.download_bytes + item.internal_download_bytes)),
+      textElement('span', '↑ ' + bytesText(item.upload_bytes + item.internal_upload_bytes)));
+    entry.append(label, track, value);
+    list.append(entry);
+  });
+  if (!items.length) list.append(textElement('li', 'Chưa có dữ liệu Top IP trong khoảng này.', 'muted'));
+}
+
+async function refreshHistory(version) {
+  const selected = isDetail && rows.find(row => String(row.id) === selection.get('id') && row.cidr === selection.get('subnet'));
+  if (isDetail && selected?.vlan == null) {
+    el('history-status').textContent = 'Cần ánh xạ VLAN ID để đọc lịch sử.';
+    return;
+  }
+  try {
+    const response = await fetch('/api/traffic/history' + (selected ? '?vlan_id=' + selected.vlan : ''), {cache: 'no-store'});
+    if (response.status === 401) { location.assign('/login'); return; }
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Không đọc được lịch sử sFlow.');
+    if (version !== trafficVersion) return;
+    historyData = data;
+    renderHistory();
+  } catch (error) {
+    if (version === trafficVersion) el('history-status').textContent = error.message + (historyData ? ' Đang giữ bản tải trước.' : '');
+  }
+}
 
 function rateText(value) {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
@@ -401,6 +549,7 @@ function detail(row) {
 
 function render() {
   renderBandwidthOverview();
+  renderHistory();
   renderTrafficChart();
   const query = el('filter').value.trim().toLowerCase();
   const selected = isDetail && rows.find(row =>
@@ -591,6 +740,7 @@ async function load() {
     el('refresh').disabled = false;
     el('traffic-minutes').disabled = false;
   }
+  await refreshHistory(trafficVersion);
 }
 async function refreshTraffic() {
   if (document.hidden || dashboardLoading || trafficRefreshing || reservationBusy !== null || !rows.length) return;
@@ -626,6 +776,7 @@ async function refreshTraffic() {
   } finally {
     trafficRefreshing = false;
   }
+  await refreshHistory(version);
 }
 setInterval(refreshTraffic, 60000);
 el('refresh').onclick = load;
