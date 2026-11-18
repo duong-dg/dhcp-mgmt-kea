@@ -56,10 +56,83 @@
 .history-top .chart-entry{grid-template-columns:190px minmax(50px,1fr) 130px}
 @media(max-width:600px){.history-top .chart-entry{grid-template-columns:120px minmax(30px,1fr) 100px}}
 </style>
-<header class="bar"><div><small>QUẢN TRỊ MẠNG / DHCPV4</small><h1>GHA Network Manager</h1><div>Theo dõi subnet và địa chỉ đã cấp trên cặp máy chủ HA</div></div><form class="logout" method="post" action="/logout"><button>Đăng xuất</button></form></header>
+<style>
+:root{--nav-width:224px;--panel-border:#e3e9f0;--primary:#116b61;--ink:#172b43}
+html{scroll-padding-top:100px}body{background:#f3f6fa;color:var(--ink);font-size:14px}
+.app-sidebar{position:fixed;inset:0 auto 0 0;width:var(--nav-width);background:#102338;color:#c1cddd;padding:30px 18px;display:flex;flex-direction:column;z-index:20}
+.sidebar-brand{display:flex;gap:11px;align-items:center;padding:0 10px 32px}
+.sidebar-mark{display:grid;place-items:center;width:42px;height:42px;background:#1b8473;color:white;border-radius:12px;font-size:14px;font-weight:800;flex-shrink:0}
+.sidebar-brand strong{display:block;color:white;font-size:15px;line-height:1.4}.sidebar-brand small{font-size:11px;color:#98adbf}
+.nav-caption{font-size:10px;font-weight:700;letter-spacing:.14em;color:#8ea5bd;padding:0 14px;margin:8px 0 12px}
+.app-sidebar nav{display:grid;gap:7px}.app-sidebar nav a{color:#b7c6d6;text-decoration:none;display:flex;align-items:center;gap:11px;padding:13px 14px;border-radius:9px}
+.app-sidebar nav a:hover,.app-sidebar nav a.active{color:#fff;background:#214151}
+.nav-icon{display:grid;place-items:center;width:23px;height:23px;border:1px solid #ffffff25;border-radius:6px;font-size:13px}
+.sidebar-footer{margin-top:auto;padding:20px 12px 0;font-size:11px;line-height:1.8;color:#9bafc4;border-top:1px solid #ffffff14}
+.app-header{margin-left:var(--nav-width);padding:20px 28px;background:#fff;color:var(--ink);border-bottom:1px solid var(--panel-border);gap:12px}
+.app-header small{font-size:10px;color:#62778e;letter-spacing:.12em}.app-header h1{font-size:25px;letter-spacing:-.03em;margin:4px 0}.app-header p{margin:0;font-size:12px;color:#62778e}
+.app-header .logout button{background:#f1f5f9;color:#455a72;border:1px solid #dfe7ef;font-size:12px}
+.header-actions{display:flex;gap:14px;align-items:center}.status-chip{padding:7px 11px;background:#edf7f3;border:1px solid #d2e8df;color:#24715b;border-radius:20px;font-size:11px;font-weight:650}
+main{margin-left:var(--nav-width);max-width:none;padding:24px 28px 40px;min-width:0}
+section,details.form{border:1px solid var(--panel-border);border-radius:16px;background:#fff;box-shadow:0 4px 18px #18334e04;padding:22px;margin:20px 0}
+h2{font-size:18px;letter-spacing:-.02em}h3{font-size:14px}p.muted{font-size:12px;line-height:1.6}
+button{border-radius:8px;padding:10px 14px;background:var(--primary);font-size:13px}button:hover:not(:disabled){filter:brightness(.94)}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid #6db8cd;outline-offset:3px}
+input,textarea,select{border-color:#dce4ed;border-radius:8px;background:#fff;font-size:13px;padding:9px 11px}
+.control-panel{border:0;background:transparent;box-shadow:none;padding:0;margin:0;display:flex;flex-wrap:wrap;gap:18px;align-items:center}
+#overview-stats{flex-basis:100%;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}
+#overview-stats>div{background:#fff;border:1px solid var(--panel-border);border-radius:14px;padding:20px;position:relative;box-shadow:0 4px 18px #18334e04}
+#overview-stats strong{font-size:28px;margin-bottom:6px;letter-spacing:-.03em;color:#203a57}
+#overview-stats>div::after{position:absolute;right:16px;top:17px;padding:5px 7px;border-radius:7px;background:#eaf2ff;color:#5477b3;font:700 10px system-ui;content:'VL'}
+#overview-stats>div:nth-child(2)::after{content:'IP';background:#f0ebfb;color:#8464ac}
+#overview-stats>div:nth-child(3)::after{content:'HA';background:#e8f6ef;color:#43896a}
+#overview-stats>div:nth-child(4)::after{content:'SF';background:#fff3e6;color:#ba873e}
+.control-panel>label{margin-left:auto;font-size:11px;color:#62778e;display:flex;align-items:center;gap:10px}.control-panel select{width:auto;margin:0}
+#notice{margin-top:18px}#traffic-status{font-size:11px;margin:12px 0 0;color:#6c7e93}
+.bandwidth-panel{background:#fff;border-color:var(--panel-border)}.bandwidth-panel h2{font-size:19px}
+.bandwidth-kpis{gap:16px;margin:20px 0}.bandwidth-card{border-radius:12px;padding:22px;background:#f1f5f9;border:1px solid #e5ecf2}
+.bandwidth-card.download{background:linear-gradient(125deg,#12685c,#178779);border-color:transparent}
+.bandwidth-card.upload{background:#edf2ff;border-color:#e0e7fa;color:#3b5d9d}
+.bandwidth-card.internal{background:#f5f1fc;border-color:#ebe3f7;color:#76549b}
+.bandwidth-card strong{font-size:clamp(25px,2.6vw,38px);margin:15px 0;line-height:1.2}
+.bandwidth-card .flow-label{font-size:12px}.bandwidth-card small{font-size:11px}
+#vlan-bandwidth:empty{display:none}#vlan-bandwidth{background:#f9fbfd;border:1px solid #e9edf3;padding:16px 18px;border-radius:12px}
+.vlan-bandwidth-item{grid-template-columns:100px minmax(80px,1fr) 180px}.vlan-bandwidth-item .chart-track{height:7px}
+#history-panel{padding:0;border:0;background:transparent;box-shadow:none}
+.history-grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(340px,1fr);gap:20px}
+.history-card{min-width:0;background:#fff;border:1px solid var(--panel-border);border-radius:16px;padding:22px;box-shadow:0 4px 18px #18334e04}
+.history-card h2,.history-card h3{font-size:17px;margin:0 0 8px}
+.history-graph{min-width:540px}.history-top{max-height:350px;overflow-y:auto;margin-bottom:0}
+.history-top .chart-entry{grid-template-columns:minmax(110px,1.1fr) minmax(25px,1fr) 90px;gap:10px;padding:12px 0}
+.history-top .chart-label strong{font-size:12px}.history-top .chart-value{font-size:11px}.history-top .chart-label small{font-size:10px}
+.history-card .chart-legend{font-size:11px;gap:14px;margin:18px 0 10px}
+.history-card #history-status{font-size:11px;line-height:1.6;padding-top:12px}
+#device-panel{min-width:0}#device-panel .bar{margin-bottom:15px}#search-label{font-size:11px;color:#62778e;min-width:230px}
+th{font-size:11px;color:#6c8096;background:#f6f8fb;font-weight:650}td{font-size:13px;padding:15px 12px}
+.lease-table th:nth-child(-n+2){background:#f6f8fb}.lease-table td{font-size:12px}
+.traffic-chart{background:#fff;border-color:var(--panel-border)}.chart-track{background:#eaf0f4}
+.chart-list .chart-label button{font-size:12px}.chart-entry{padding:14px 0}
+#editor{font-size:13px;background:#f9fbfd;box-shadow:none}#editor summary{color:#49627b}
+#vlan-detail .stats>div{background:#f4f7fb;border:1px solid #e8edf3}
+@media(min-width:1650px){main{padding:28px 40px}.app-header{padding-left:40px;padding-right:40px}.history-grid{grid-template-columns:minmax(0,1.7fr) minmax(380px,1fr)}}
+@media(max-width:1180px){:root{--nav-width:190px}.history-grid{grid-template-columns:1fr}#overview-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.history-top{max-height:320px}}
+@media(max-width:800px){.app-sidebar{position:relative;width:auto;padding:14px 18px}.sidebar-brand{padding:0 0 12px}.sidebar-brand small,.nav-caption,.sidebar-footer{display:none}.app-sidebar nav{display:flex;gap:6px;overflow-x:auto}.app-sidebar nav a{white-space:nowrap;font-size:12px;padding:8px 10px}.nav-icon{display:none}.app-header{margin-left:0;padding:18px}.app-header h1{font-size:22px}.status-chip{display:none}main{margin-left:0;padding:18px}.bandwidth-kpis{grid-template-columns:1fr}.bandwidth-card strong{font-size:32px}}
+@media(max-width:480px){#overview-stats{gap:10px}#overview-stats>div{padding:16px 12px}#overview-stats strong{font-size:23px}#overview-stats>div::after{right:9px;top:10px;font-size:8px;padding:3px}.history-card,section{padding:16px}.history-top .chart-entry{grid-template-columns:110px minmax(15px,1fr) 82px}.control-panel>label{margin-left:0}.vlan-bandwidth-item{grid-template-columns:75px 1fr}.vlan-bandwidth-item .chart-value{grid-column:2;text-align:left}}
+</style>
+<aside class="app-sidebar" aria-label="Điều hướng hệ thống">
+<div class="sidebar-brand"><span class="sidebar-mark" aria-hidden="true">GHA</span><div><strong>GHA Network<br>Manager</strong><small>NETWORK OPERATIONS</small></div></div>
+<div class="nav-caption">QUẢN TRỊ HỆ THỐNG</div>
+<nav>
+<a href="/" id="nav-dashboard"><span class="nav-icon" aria-hidden="true">▦</span>Tổng quan</a>
+<a href="#history-panel"><span class="nav-icon" aria-hidden="true">↗</span>Lịch sử băng thông</a>
+<a href="#device-panel" id="nav-devices"><span class="nav-icon" aria-hidden="true">≡</span>VLAN &amp; thiết bị</a>
+<a href="/#editor" id="nav-new-vlan"><span class="nav-icon" aria-hidden="true">+</span>Kế hoạch VLAN</a>
+</nav>
+<div class="sidebar-footer">Kea DHCP HA · sFlow<br>Không gian quản trị mạng nội bộ</div>
+</aside>
+<header class="bar app-header"><div><small>NETWORK OPERATIONS / GHA</small><h1 id="page-title">Tổng quan hệ thống</h1><p>Giám sát địa chỉ IP, DHCP và lưu lượng mạng</p></div><div class="header-actions"><span class="status-chip">sFlow · Cập nhật 60 giây</span><form class="logout" method="post" action="/logout"><button>Đăng xuất</button></form></div></header>
 <main>
-<section class="bar">
-<div class="stats" id="overview-stats"><div><strong id="count">—</strong>Subnet</div><div><strong id="total">—</strong>Lease đang hoạt động</div><div><strong id="health">—</strong>HA 2 DHCP</div></div>
+<section class="control-panel">
+<div class="stats" id="overview-stats"><div><strong id="count">—</strong>Subnet quản lý</div><div><strong id="total">—</strong>Lease đang hoạt động</div><div><strong id="health">—</strong>HA 2 DHCP</div><div><strong id="sflow-count">—</strong>VLAN có số liệu sFlow</div></div>
 <a class="back" id="back" href="/" hidden>← Dashboard</a><label>Cửa sổ sFlow<select id="traffic-minutes"><option value="1" selected>1 phút</option><option value="5">5 phút</option><option value="15">15 phút</option></select></label><button id="refresh">Làm mới</button>
 </section>
 <p id="notice" class="notice" role="status"></p>
@@ -70,15 +143,21 @@
 <div id="vlan-bandwidth"></div>
 <p id="bandwidth-note" class="muted"></p>
 </section>
-<section class="bandwidth-panel" id="history-panel">
+<section id="history-panel">
+<div class="history-grid">
+<article class="history-card">
 <h2>Lịch sử băng thông · 24 giờ</h2>
 <p id="history-description" class="muted">Đang tải dữ liệu lịch sử từ sFlow…</p>
 <div class="chart-legend"><span><i class="chart-dot" aria-hidden="true"></i>Internet tải xuống</span><span><i class="chart-dot upload" aria-hidden="true"></i>Internet tải lên</span></div>
 <div id="history-graph" class="scroll"></div>
 <p id="history-status" class="muted" role="status"></p>
+</article>
+<article class="history-card">
 <h3>Top 10 IP · Dung lượng 24 giờ</h3>
 <p class="muted">Tổng Internet và nội bộ, theo dữ liệu đã lưu ở sFlow. Tên thiết bị được ghép từ lease hiện tại.</p>
 <ol id="history-top" class="chart-list history-top" aria-label="Top 10 IP theo dung lượng 24 giờ"></ol>
+</article>
+</div>
 </section>
 <details class="form" id="editor">
 <summary>Lập kế hoạch DHCP cho VLAN trên trunk</summary>
@@ -108,7 +187,7 @@
 <p id="chart-empty" class="muted" role="status"></p>
 <p id="chart-note" class="muted"></p>
 </section>
-<section>
+<section id="device-panel">
 <div class="bar"><div><h2 id="list-title">Tổng quan VLAN</h2><p id="list-description" class="muted">Chọn một VLAN để xem dải cấp phát và danh sách IP.</p></div><label id="search-label">Tìm theo VLAN, subnet hoặc thiết bị<input id="filter" type="search" placeholder="Nhập từ khóa"></label></div>
 <p id="reservation-status" class="muted" role="status"></p>
 <div id="table-navigation" class="table-navigation" hidden><small>Kéo ngang để xem thêm cột</small><div id="horizontal-scroll" tabindex="0" role="region" aria-label="Kéo ngang bảng thiết bị"><div id="horizontal-spacer"></div></div></div>
@@ -296,6 +375,7 @@ function renderBandwidthOverview() {
     if (row.vlan != null && row.traffic?.rates) unique.set(row.vlan, row);
   }
   const available = [...unique.values()];
+  el('sflow-count').textContent = available.length || '—';
   const sum = key => available.length ? available.reduce((total, row) => total + row.traffic.rates[key], 0) : undefined;
   el('bandwidth-title').textContent = selected ? 'Băng thông · ' + vlanName(selected) : 'Băng thông mạng';
   el('bandwidth-description').textContent = 'Trung bình ' + sflowMinutes + ' phút · ' +
@@ -416,6 +496,15 @@ function appendRates(cell, rates) {
 }
 const selection = new URLSearchParams(location.search);
 const isDetail = location.pathname === '/vlan';
+el('nav-dashboard').classList.toggle('active', !isDetail);
+el('nav-devices').classList.toggle('active', isDetail);
+el('nav-new-vlan').onclick = event => {
+  if (isDetail) return;
+  event.preventDefault();
+  el('editor').open = true;
+  el('editor').scrollIntoView({behavior: 'smooth', block: 'start'});
+};
+if (!isDetail && location.hash === '#editor') el('editor').open = true;
 el('back').hidden = !isDetail;
 el('overview-stats').hidden = isDetail;
 el('editor').hidden = isDetail;
@@ -460,6 +549,7 @@ function detail(row) {
   panel.replaceChildren();
   panel.hidden = !row;
   if (!row) return;
+  el('page-title').textContent = vlanName(row) + ' · Thiết bị & lưu lượng';
   panel.append(textElement('h2', vlanName(row), 'detail-title'));
   panel.append(textElement('p', row.cidr + ' · Subnet ID ' + row.id, 'muted'));
   const stats = document.createElement('div');
