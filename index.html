@@ -35,6 +35,18 @@
 .chart-value span{display:block;margin:3px 0}
 @media(max-width:600px){.chart-entry{grid-template-columns:130px minmax(30px,1fr) 88px;gap:8px}.chart-label button{font-size:12px}.chart-value{font-size:11px}}
 @media(prefers-reduced-motion:reduce){.chart-fill{transition:none}}
+.bandwidth-panel{padding:26px;background:#fbfdfd;border-color:#d8e7e5}
+.bandwidth-panel h2{font-size:24px;letter-spacing:-.02em}
+.bandwidth-kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:22px 0}
+.bandwidth-card{padding:22px;border-radius:16px;background:#edf5f8;min-width:0}
+.bandwidth-card.download{background:linear-gradient(120deg,#123d40,#13695c);color:#fff}
+.bandwidth-card.upload{background:#eaf0ff;color:#234c9d}
+.bandwidth-card strong{display:block;font-size:clamp(23px,3vw,36px);letter-spacing:-.04em;margin:12px 0;font-variant-numeric:tabular-nums}
+.bandwidth-card small{opacity:.8}.bandwidth-card .flow-label{font-weight:650}
+.vlan-bandwidth-item{display:grid;grid-template-columns:100px 1fr 160px;gap:16px;align-items:center;padding:14px 0;border-bottom:1px solid #e4eceb}
+.vlan-bandwidth-item:last-child{border:0}.vlan-bandwidth-item a{color:#096957;font-weight:700;text-decoration:none}
+.vlan-bandwidth-item .chart-value{font-size:13px}
+@media(max-width:650px){.bandwidth-kpis{grid-template-columns:1fr}.bandwidth-card strong{font-size:32px}.vlan-bandwidth-item{grid-template-columns:75px 1fr;gap:10px}.vlan-bandwidth-item .chart-value{grid-column:2;text-align:left}.bandwidth-panel{padding:18px}}
 </style>
 <header class="bar"><div><small>QUẢN TRỊ MẠNG / DHCPV4</small><h1>GHA Network Manager</h1><div>Theo dõi subnet và địa chỉ đã cấp trên cặp máy chủ HA</div></div><form class="logout" method="post" action="/logout"><button>Đăng xuất</button></form></header>
 <main>
@@ -44,6 +56,12 @@
 </section>
 <p id="notice" class="notice" role="status"></p>
 <p id="traffic-status" class="muted" role="status">Băng thông tự cập nhật mỗi 60 giây khi trang đang mở.</p>
+<section id="bandwidth-overview" class="bandwidth-panel" aria-label="Tổng quan băng thông">
+<div class="bar"><div><h2 id="bandwidth-title">Băng thông mạng</h2><p id="bandwidth-description" class="muted"></p></div></div>
+<div id="bandwidth-kpis" class="bandwidth-kpis"></div>
+<div id="vlan-bandwidth"></div>
+<p id="bandwidth-note" class="muted"></p>
+</section>
 <details class="form" id="editor">
 <summary>Lập kế hoạch DHCP cho VLAN trên trunk</summary>
 <form id="form">
@@ -121,6 +139,69 @@ function rateText(value) {
   if (value >= 1000000) return (value / 1000000).toFixed(2) + ' Mbps';
   if (value >= 1000) return (value / 1000).toFixed(2) + ' Kbps';
   return value.toFixed(0) + ' bps';
+}
+
+function renderBandwidthOverview() {
+  const selected = isDetail && rows.find(row => String(row.id) === selection.get('id') && row.cidr === selection.get('subnet'));
+  const unique = new Map();
+  for (const row of selected ? [selected] : isDetail ? [] : rows) {
+    if (row.vlan != null && row.traffic?.rates) unique.set(row.vlan, row);
+  }
+  const available = [...unique.values()];
+  const sum = key => available.length ? available.reduce((total, row) => total + row.traffic.rates[key], 0) : undefined;
+  el('bandwidth-title').textContent = selected ? 'Băng thông · ' + vlanName(selected) : 'Băng thông mạng';
+  el('bandwidth-description').textContent = 'Trung bình ' + sflowMinutes + ' phút · ' +
+    available.length + ' VLAN có số liệu · Tự cập nhật 60 giây';
+  const cards = el('bandwidth-kpis');
+  cards.replaceChildren();
+  for (const [name, value, hint, style] of [
+    ['↓ Internet tải xuống', rateText(sum('internet_download_bps')), 'Lưu lượng từ Internet tới thiết bị', 'download'],
+    ['↑ Internet tải lên', rateText(sum('internet_upload_bps')), 'Lưu lượng từ thiết bị ra Internet', 'upload'],
+    ['↔ Mạng nội bộ', '↓ ' + rateText(sum('internal_download_bps')),
+      'Tải lên nội bộ · ↑ ' + rateText(sum('internal_upload_bps')), 'internal']
+  ]) {
+    const card = document.createElement('div');
+    card.className = 'bandwidth-card ' + style;
+    card.append(textElement('span', name, 'flow-label'), textElement('strong', value), textElement('small', hint));
+    cards.append(card);
+  }
+  const chart = el('vlan-bandwidth');
+  chart.replaceChildren();
+  if (!isDetail && available.length) {
+    chart.append(textElement('h3', 'VLAN dùng băng thông Internet'));
+    const ordered = available.sort((a, b) =>
+      (b.traffic.rates.internet_download_bps + b.traffic.rates.internet_upload_bps) -
+      (a.traffic.rates.internet_download_bps + a.traffic.rates.internet_upload_bps));
+    const maximum = Math.max(1, ...ordered.flatMap(row =>
+      [row.traffic.rates.internet_download_bps, row.traffic.rates.internet_upload_bps]));
+    for (const row of ordered) {
+      const entry = document.createElement('div');
+      entry.className = 'vlan-bandwidth-item';
+      const link = textElement('a', vlanName(row));
+      link.href = '/vlan?' + new URLSearchParams({id: row.id, subnet: row.cidr});
+      const bars = document.createElement('div');
+      bars.setAttribute('aria-hidden', 'true');
+      for (const direction of ['download', 'upload']) {
+        const track = document.createElement('div');
+        track.className = 'chart-track';
+        const fill = document.createElement('div');
+        fill.className = 'chart-fill ' + direction;
+        fill.style.width = row.traffic.rates['internet_' + direction + '_bps'] / maximum * 100 + '%';
+        track.append(fill);
+        bars.append(track);
+      }
+      const value = document.createElement('div');
+      value.className = 'chart-value';
+      value.append(textElement('span', '↓ ' + rateText(row.traffic.rates.internet_download_bps)),
+        textElement('span', '↑ ' + rateText(row.traffic.rates.internet_upload_bps)));
+      if (row.traffic.rates.status !== 'fresh') value.append(textElement('small', 'Mẫu cũ / chưa xác định'));
+      entry.append(link, bars, value);
+      chart.append(entry);
+    }
+  }
+  const stale = available.filter(row => row.traffic.rates.status !== 'fresh').length;
+  el('bandwidth-note').textContent = !available.length ? 'Chưa có số liệu băng thông cho lựa chọn này.' :
+    'Tổng hợp các VLAN có dữ liệu sFlow.' + (stale ? ' Có ' + stale + ' VLAN đang dùng mẫu cũ hoặc chưa xác định độ mới.' : '');
 }
 
 function rankedTraffic(items, metric) {
@@ -255,15 +336,6 @@ function detail(row) {
     const timestamp = row.traffic.last_seen && !Number.isNaN(seen.getTime()) ?
       seen.toLocaleString('vi-VN') : 'Chưa có thời điểm quan sát';
     panel.append(textElement('p', 'sFlow quan sát cuối · ' + timestamp, 'muted'));
-    if (row.traffic.rates) {
-      const rates = row.traffic.rates;
-      const block = document.createElement('section');
-      block.append(textElement('h3', 'Lưu lượng VLAN · trung bình ' + sflowMinutes + ' phút'));
-      appendRates(block, rates);
-      block.append(textElement('p', 'Nội bộ · ↓ ' + rateText(rates.internal_download_bps) +
-        ' · ↑ ' + rateText(rates.internal_upload_bps), 'muted'));
-      panel.append(block);
-    }
   }
   const edit = textElement('button', 'Chỉnh dải DHCP và IP không cấp');
   edit.type = 'button';
@@ -328,6 +400,7 @@ function detail(row) {
 }
 
 function render() {
+  renderBandwidthOverview();
   renderTrafficChart();
   const query = el('filter').value.trim().toLowerCase();
   const selected = isDetail && rows.find(row =>

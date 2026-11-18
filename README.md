@@ -161,3 +161,12 @@ tốc độ, tải xuống hoặc tải lên. Hai thanh màu cùng thang đo hi�
 độ từng hướng. Biểu đồ dùng cửa sổ đang chọn và cập nhật cùng sFlow mỗi
 60 giây. IP có mẫu cũ được ghi chú. Chọn IP trên biểu đồ để lọc bảng.
 Xếp hạng dựa trên tối đa 200 IP nguồn API trả về, không tính nội bộ.
+
+Ở trang đăng nhập, chọn Ghi nhớ trình duyệt 7 ngày trước khi nhập OTP.
+Cookie phiên được cấp sau khi OTP đúng và giữ hiệu lực tối đa 7 ngày.
+Nếu bỏ chọn, phiên kéo dài 8 giờ. Đăng xuất xóa cookie trên trình duyệt;
+đổi mật khẩu web làm các phiên đang dùng mất hiệu lực. Trình duyệt cần
+giữ cookie của đúng địa chỉ HTTPS để sử dụng lại phiên.
+Dashboard có ba thẻ tốc độ Internet tải xuống, tải lên và nội bộ. Tổng
+chỉ cộng các VLAN có số liệu và loại trùng VLAN khi có nhiều subnet.
+Biểu đồ VLAN trên trang tổng quan cho phép mở trang thiết bị tương ứng.

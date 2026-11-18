@@ -591,7 +591,8 @@ class Handler(BaseHTTPRequestHandler):
             mail_otp(code)
         except (KeyError, ValueError, OSError, smtplib.SMTPException):
             return self.reply(502, {"error": "Không gửi được OTP. Kiểm tra SMTP."})
-        LOGIN_CHALLENGE.update(code=code, nonce=nonce, attempts=0)
+        LOGIN_CHALLENGE.update(code=code, nonce=nonce, attempts=0,
+                               remember=fields.get("remember", [""])[0] == "yes")
         self.login_page(otp=True, headers=[
             ("Set-Cookie", f"kea_login={nonce}; Path=/login; Max-Age=300; HttpOnly; SameSite=Strict; Secure"),
         ])
@@ -613,7 +614,7 @@ class Handler(BaseHTTPRequestHandler):
         challenge.pop("code")
         FAILED_LOGINS.pop(self.client_address[0], None)
         secure = "; Secure"
-        age = 8 * 3600
+        age = 7 * 24 * 3600 if challenge.get("remember") else 8 * 3600
         token = self.session_token(int(time.time()) + age)
         self.reply(303, b"", headers=[
             ("Location", "/"),
